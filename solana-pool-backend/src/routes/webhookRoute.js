@@ -1,71 +1,43 @@
 'use strict';
 /**
  * webhookRoute.js
- * POST /webhook  —  Receives live transaction data directly from Helius Webhook.
+ * POST /webhook  —  Receives live transaction notifications from Helius Webhook.
  *
- * ─── HOW THIS WORKS ──────────────────────────────────────────────────────────
+ * ─── WHY WE FETCH THE TX AFTER RECEIVING THE WEBHOOK ────────────────────────
  *
- *  OLD FLOW (Postman / manual):
- *    You  →  POST /decode { signature }
- *         →  Server fetches tx from Helius RPC (extra network round-trip)
- *         →  Decodes + stores
+ *  Helius webhook RAW payload does NOT include jsonParsed instructions.
+ *  The instructions in the webhook body have:
+ *    - .data      (base58 encoded opaque bytes)
+ *    - .accounts  (array of account indices, not pubkey strings)
+ *    - .parsed    = undefined  ← MISSING
  *
- *  NEW FLOW (Webhook / automatic):
- *    Helius  →  POST /webhook  [ full tx payload, already jsonParsed ]
- *            →  Server decodes DIRECTLY from the payload (0 extra RPC calls)
- *            →  Decodes + stores
+ *  Our decoder requires jsonParsed format (.parsed.type, .parsed.info, etc.)
+ *  to identify token transfers (transferChecked / transfer instructions).
+ *  Without .parsed, extractTransferAmount() returns immediately for every
+ *  child instruction → 0 transfers found → ghost CPI guard fires → 0 swaps.
  *
- * ─── HELIUS WEBHOOK PAYLOAD FORMAT ──────────────────────────────────────────
+ *  THE FIX: Use the signature from the webhook notification to fetch the
+ *  full jsonParsed transaction via getTransaction() — exactly the same as
+ *  the /decode endpoint. The webhook acts as a real-time trigger/notification,
+ *  and we fetch the properly encoded data separately.
  *
- *  Helius sends an ARRAY of transaction objects:
- *  [
- *    {
- *      "signature": "...",
- *      "slot": 405434576,
- *      "blockTime": 1773130821,
- *      "transaction": { "message": { ... }, "signatures": [...] },
- *      "meta": { "err": null, "preBalances": [...], "postBalances": [...], ... }
- *    },
- *    ...
- *  ]
+ * ─── FLOW ────────────────────────────────────────────────────────────────────
  *
- *  Each object is already in jsonParsed format — identical to what
- *  heliusService.getTransaction() returns. So our decoderService works unchanged.
+ *  Helius  →  POST /webhook  [ array of tx notifications with signatures ]
+ *          →  Reply 200 immediately (Helius has 3s timeout, retries on failure)
+ *          →  For each signature, call getTransaction(sig) for jsonParsed data
+ *          →  Decode swaps → store in DB → fire-and-forget enrichment
  *
  * ─── SECURITY ────────────────────────────────────────────────────────────────
  *
- *  Helius lets you set an Authorization header secret on your webhook.
- *  Set WEBHOOK_SECRET in your .env and Helius will send:
- *    Authorization: <your-secret>
- *  If the header doesn't match → 401 rejected immediately.
- *  If WEBHOOK_SECRET is not set in .env → auth check is skipped (dev mode).
- *
- * ─── SETUP STEPS ─────────────────────────────────────────────────────────────
- *
- *  1. Add to .env:
- *       WEBHOOK_SECRET=any_random_secret_string_you_choose
- *
- *  2. In Helius dashboard (https://dev.helius.xyz/webhooks):
- *       • Webhook URL:   https://your-server.com/webhook
- *       • Auth Header:   <same value as WEBHOOK_SECRET>
- *       • Tx Type:       Any (or filter by program IDs)
- *       • Encoding:      jsonParsed
- *       • Addresses:     Add DEX pool addresses to watch
- *
- *  3. If running locally, expose via:
- *       ngrok http 3000
- *     Use the ngrok URL in Helius dashboard.
- *
- * ─── RESPONSE ────────────────────────────────────────────────────────────────
- *
- *  Always returns HTTP 200 to Helius within 3 seconds to prevent retries.
- *  Heavy processing (metadata, aggregation) is fire-and-forget.
- *  On error, we still return 200 (with error details) so Helius doesn't retry.
+ *  Set WEBHOOK_SECRET in .env — same value goes in Helius dashboard Auth Header.
+ *  All requests without matching Authorization header are rejected with 401.
  */
 
 const express = require('express');
 const router = express.Router();
 
+const { getTransaction } = require('../services/heliusService');
 const { decodeSwaps } = require('../services/decoderService');
 const { ensurePoolExists } = require('../services/poolService');
 const { calculateUsdValue } = require('../services/priceService');
@@ -76,24 +48,20 @@ const { ensureTokenExists,
 const { aggregatePool } = require('../services/aggregationService');
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  SECURITY MIDDLEWARE — Authorization header check
+//  SECURITY — Authorization header check
 // ─────────────────────────────────────────────────────────────────────────────
 
 function verifyWebhookSecret(req, res, next) {
     const secret = process.env.WEBHOOK_SECRET;
-
-    // If no secret configured, skip auth (useful during local dev)
     if (!secret) {
-        console.warn('[Webhook] ⚠️  WEBHOOK_SECRET not set — skipping auth check (dev mode)');
+        // No secret configured — allow all (dev/testing mode)
         return next();
     }
-
     const authHeader = req.headers['authorization'] ?? '';
     if (authHeader !== secret) {
-        console.warn(`[Webhook] ❌ Unauthorized request. Header: "${authHeader.slice(0, 20)}..."`);
+        console.warn('[Webhook] Unauthorized request rejected');
         return res.status(401).json({ error: 'Unauthorized' });
     }
-
     next();
 }
 
@@ -102,77 +70,77 @@ function verifyWebhookSecret(req, res, next) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.post('/', verifyWebhookSecret, async (req, res) => {
-    // ── 1. Validate payload ───────────────────────────────────────────────────
     const payload = req.body;
 
+    // Helius sends test pings as empty arrays — just acknowledge
     if (!Array.isArray(payload) || payload.length === 0) {
-        // Helius sometimes sends test pings with empty arrays — just acknowledge
-        console.log('[Webhook] Received empty/non-array payload — acknowledging');
         return res.status(200).json({ received: true, processed: 0 });
     }
 
-    // ── 2. Respond to Helius immediately (must reply within 3s or it retries) ─
-    // We send 200 NOW and process async in the background.
+    // Extract all signatures from the webhook notification
+    const signatures = [];
+    for (const item of payload) {
+        const sig =
+            item?.signature ??
+            item?.transaction?.signatures?.[0] ??
+            null;
+        if (sig && typeof sig === 'string') {
+            signatures.push(sig);
+        }
+    }
+
+    if (signatures.length === 0) {
+        console.warn('[Webhook] No valid signatures found in payload');
+        return res.status(200).json({ received: true, processed: 0 });
+    }
+
+    // Reply to Helius immediately — must respond within 3 seconds
     res.status(200).json({
         received: true,
-        txCount: payload.length,
-        message: 'Processing in background',
+        signatures: signatures.length,
+        message: 'Processing',
     });
 
-    // ── 3. Process all transactions in the background ─────────────────────────
+    console.log('[Webhook] Received', signatures.length, 'transaction(s) to process');
+
+    // Process each signature in background
     setImmediate(async () => {
-        for (const txPayload of payload) {
-            await processWebhookTransaction(txPayload);
+        for (const sig of signatures) {
+            await processTransaction(sig);
         }
     });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  PROCESS A SINGLE TRANSACTION FROM THE WEBHOOK PAYLOAD
+//  PROCESS ONE TRANSACTION
+//  Fetches full jsonParsed tx from Helius RPC, decodes, stores.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function processWebhookTransaction(txPayload) {
-    // Extract signature — Helius puts it in txPayload.signature directly
-    // OR inside txPayload.transaction.signatures[0]
-    const signature =
-        txPayload?.signature ??
-        txPayload?.transaction?.signatures?.[0] ??
-        null;
-
-    if (!signature) {
-        console.warn('[Webhook] Transaction payload has no signature — skipping');
-        return;
-    }
-
+async function processTransaction(signature) {
     try {
-        console.log(`[Webhook] Processing tx: ${signature}`);
+        console.log('[Webhook] Processing:', signature);
 
-        // ── Build the tx object our decoder expects ───────────────────────────
-        // Helius webhook payload is already in the same format as getTransaction()
-        // result — just needs to be structured as { slot, blockTime, transaction, meta }
-        const tx = buildTxObject(txPayload);
+        // Fetch full jsonParsed transaction — this is what the decoder needs.
+        // The webhook payload itself is NOT jsonParsed (no .parsed on instructions),
+        // so we always fetch fresh from RPC with encoding=jsonParsed.
+        const tx = await getTransaction(signature);
 
-        if (!tx) {
-            console.warn(`[Webhook] Could not build tx object for: ${signature}`);
-            return;
-        }
-
-        // ── Extract wallet (signer = accountKeys[0]) ──────────────────────────
+        // Extract signer wallet (accountKeys[0])
         const rawKeys = tx.transaction?.message?.accountKeys ?? [];
         const firstKey = rawKeys[0];
         const wallet = typeof firstKey === 'string' ? firstKey : (firstKey?.pubkey ?? null);
 
-        // ── Decode swaps (same decoder, zero extra RPC calls) ─────────────────
+        // Decode all pool-level swap events
         const swapEvents = decodeSwaps(tx, signature);
 
         if (swapEvents.length === 0) {
-            console.log(`[Webhook] No swaps in tx: ${signature}`);
+            console.log('[Webhook] No swaps:', signature.slice(0, 20) + '...');
             return;
         }
 
-        console.log(`[Webhook] ${swapEvents.length} swap(s) found in: ${signature}`);
+        console.log('[Webhook]', swapEvents.length, 'swap(s) in', signature.slice(0, 20) + '...');
 
-        // ── Store each swap ───────────────────────────────────────────────────
+        // Store each swap
         for (const event of swapEvents) {
             try {
                 const { dexId } = await ensurePoolExists({
@@ -201,10 +169,13 @@ async function processWebhookTransaction(txPayload) {
                 });
 
                 console.log(
-                    `[Webhook] ✅ Stored: ${event.dexName} @ ${event.poolAddress} | ${event.swapSide.toUpperCase()} | USD=${usdValue}`
+                    '[Webhook] ✅', event.dexName,
+                    '| pool:', event.poolAddress.slice(0, 12) + '...',
+                    '|', event.swapSide.toUpperCase(),
+                    '| USD:', usdValue?.toFixed(4) ?? 'n/a'
                 );
 
-                // ── Fire-and-forget: metadata + stats ──────────────────────────
+                // Fire-and-forget: token metadata + pool stats (never blocks)
                 setImmediate(async () => {
                     try {
                         await ensureTokenExists(event.baseMint);
@@ -212,58 +183,18 @@ async function processWebhookTransaction(txPayload) {
                         await enrichPoolSymbols(event.poolAddress, event.baseMint, event.quoteMint);
                         await aggregatePool(event.poolAddress);
                     } catch (e) {
-                        console.warn('[Webhook] Post-swap enrichment error:', e.message);
+                        console.warn('[Webhook] Enrichment error:', e.message);
                     }
                 });
 
-            } catch (swapErr) {
-                console.error(
-                    `[Webhook] Error storing swap @ pool ${event.poolAddress}: ${swapErr.message}`
-                );
+            } catch (err) {
+                console.error('[Webhook] Store error @ pool', event.poolAddress, ':', err.message);
             }
         }
 
     } catch (err) {
-        console.error(`[Webhook] Fatal error processing tx ${signature}: ${err.message}`);
+        console.error('[Webhook] Failed to process', signature.slice(0, 20) + '...', ':', err.message);
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  NORMALIZE HELIUS WEBHOOK PAYLOAD → decoder-compatible tx object
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Helius webhook payloads come in two shapes depending on your webhook config:
- *
- *  Shape A — Enhanced transaction (Helius enhanced webhooks):
- *  {
- *    "signature": "...",
- *    "slot": 123,
- *    "blockTime": 1234567890,
- *    "transaction": { "message": {...}, "signatures": [...] },
- *    "meta": { "err": null, "preBalances": [...], ... }
- *  }
- *
- *  Shape B — Raw Helius webhook (accountAddresses filter):
- *  Same as Shape A — top-level fields.
- *
- *  Both shapes match what heliusService.getTransaction() returns, so no
- *  transformation is needed beyond normalizing the wrapper object.
- */
-function buildTxObject(payload) {
-    // If it already looks like a full tx result (has .transaction and .meta) — use directly
-    if (payload?.transaction?.message && payload?.meta) {
-        return {
-            slot: payload.slot ?? null,
-            blockTime: payload.blockTime ?? null,
-            transaction: payload.transaction,
-            meta: payload.meta,
-        };
-    }
-
-    // Some Helius webhook formats wrap differently — try to handle them
-    console.warn('[Webhook] Unexpected payload shape:', JSON.stringify(payload).slice(0, 200));
-    return null;
 }
 
 module.exports = router;
