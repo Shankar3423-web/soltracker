@@ -19,7 +19,7 @@ const { STABLECOIN_MINTS, WSOL_MINT } = require('../config/constants');
 // Simple in-memory cache — refresh every 60 seconds to avoid hammering CoinGecko
 let _cachedSolPrice = null;
 let _cacheLastFetched = 0;
-const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_MS = 5 * 60_000;  // 5 minutes — avoids CoinGecko free tier 429s
 
 /**
  * Fetch the current SOL/USD price.

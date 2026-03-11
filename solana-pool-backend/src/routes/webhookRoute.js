@@ -116,14 +116,41 @@ router.post('/', verifyWebhookSecret, async (req, res) => {
 //  Fetches full jsonParsed tx from Helius RPC, decodes, stores.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  RETRY HELPER — exponential backoff for Helius RPC 429s
+//  Free plan: 10 req/sec. Bursts of webhooks all call getTransaction()
+//  simultaneously → 429s → data loss. Retry fixes this.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getTransactionWithRetry(signature, maxRetries = 5) {
+    let delay = 500; // start at 500ms, doubles each retry: 500→1000→2000→4000→8000
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await getTransaction(signature);
+        } catch (err) {
+            const is429 = err.message?.includes('429');
+            if (is429 && attempt < maxRetries) {
+                console.warn(
+                    '[Webhook] Rate limited (429), retry', attempt, '/', maxRetries,
+                    '— waiting', delay + 'ms for', signature.slice(0, 20) + '...'
+                );
+                await new Promise(r => setTimeout(r, delay));
+                delay *= 2; // exponential backoff
+            } else {
+                throw err; // not a 429, or out of retries — propagate
+            }
+        }
+    }
+}
+
 async function processTransaction(signature) {
     try {
         console.log('[Webhook] Processing:', signature);
 
-        // Fetch full jsonParsed transaction — this is what the decoder needs.
+        // Fetch full jsonParsed transaction with retry on 429.
         // The webhook payload itself is NOT jsonParsed (no .parsed on instructions),
         // so we always fetch fresh from RPC with encoding=jsonParsed.
-        const tx = await getTransaction(signature);
+        const tx = await getTransactionWithRetry(signature);
 
         // Extract signer wallet (accountKeys[0])
         const rawKeys = tx.transaction?.message?.accountKeys ?? [];
