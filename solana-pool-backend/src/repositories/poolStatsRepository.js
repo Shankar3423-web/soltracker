@@ -100,14 +100,18 @@ async function getPoolStatsByDex(dexId, limit = 100, offset = 0) {
        p.quote_token_mint,
        p.base_symbol,
        p.quote_symbol,
-       bt.name       AS base_name,
-       bt.logo_url   AS base_logo,
-       qt.name       AS quote_name,
-       qt.logo_url   AS quote_logo
+       d.name           AS dex_name,
+       bt.symbol        AS base_symbol_t,
+       bt.name          AS base_name,
+       bt.logo_url      AS base_logo,
+       qt.symbol        AS quote_symbol_t,
+       qt.name          AS quote_name,
+       qt.logo_url      AS quote_logo
      FROM pool_stats ps
-     JOIN pools p  ON p.pool_address = ps.pool_address
-     LEFT JOIN tokens bt ON bt.mint  = p.base_token_mint
-     LEFT JOIN tokens qt ON qt.mint  = p.quote_token_mint
+     JOIN pools  p  ON p.pool_address = ps.pool_address
+     JOIN dexes  d  ON d.id           = p.dex_id
+     LEFT JOIN tokens bt ON bt.mint   = p.base_token_mint
+     LEFT JOIN tokens qt ON qt.mint   = p.quote_token_mint
      WHERE p.dex_id = $1
      ORDER BY ps.volume_24h DESC NULLS LAST
      LIMIT $2 OFFSET $3`,
