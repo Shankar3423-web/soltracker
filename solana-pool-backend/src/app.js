@@ -3,9 +3,13 @@ const express = require('express');
 const decodeRoute = require('./routes/decodeRoute');
 const poolsRoute = require('./routes/poolsRoute');
 const webhookRoute = require('./routes/webhookRoute');
+const authRoute = require('./routes/authRoute');
+
+const cors = require('cors');
 
 const app = express();
 
+app.use(cors());
 app.use(express.json({ limit: '10mb' })); // webhooks can be large (multi-tx batches)
 
 // Health check
@@ -19,6 +23,9 @@ app.use('/decode', decodeRoute);
 
 // Read-only API for frontend
 app.use('/pools', poolsRoute);
+
+// Firebase Google auth — verifies ID token and upserts user in PostgreSQL
+app.use('/auth', authRoute);
 
 // Global error handler
 app.use((err, _req, res, _next) => {
