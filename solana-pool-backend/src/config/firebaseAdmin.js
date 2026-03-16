@@ -3,16 +3,24 @@ const admin = require('firebase-admin');
 
 let serviceAccount;
 
-if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    // Production (Render): credentials stored as an env var (JSON string)
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+if (process.env.FIREBASE_PRIVATE_KEY) {
+
+    serviceAccount = {
+        project_id: process.env.FIREBASE_PROJECT_ID,
+        client_email: process.env.FIREBASE_CLIENT_EMAIL,
+        private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+    };
+
 } else {
-    // Local development: load from the gitignored JSON file
+
     serviceAccount = require('./firebaseServiceKey.json');
+
 }
 
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-});
+if (!admin.apps.length) {
+    admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+    });
+}
 
 module.exports = admin;
