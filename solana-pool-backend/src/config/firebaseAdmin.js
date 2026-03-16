@@ -3,18 +3,19 @@ const admin = require('firebase-admin');
 
 let serviceAccount;
 
-if (process.env.FIREBASE_PRIVATE_KEY) {
+if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    // Production (Render): decode Base64 env var → parse JSON
+    // No newline/PEM formatting issues with this approach
+    const decoded = Buffer.from(
+        process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
+        'base64'
+    ).toString('utf8');
 
-    serviceAccount = {
-        project_id: process.env.FIREBASE_PROJECT_ID,
-        client_email: process.env.FIREBASE_CLIENT_EMAIL,
-        private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
-    };
+    serviceAccount = JSON.parse(decoded);
 
 } else {
-
+    // Local development: load from the gitignored JSON file
     serviceAccount = require('./firebaseServiceKey.json');
-
 }
 
 if (!admin.apps.length) {
