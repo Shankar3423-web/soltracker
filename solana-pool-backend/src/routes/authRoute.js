@@ -10,6 +10,9 @@ const pool = require('../config/db');
  * verifies it with Firebase Admin, then upserts the user in PostgreSQL.
  */
 router.post('/google', async (req, res) => {
+    let decoded;
+
+    // 1. Verify Firebase Token First
     try {
         const { token } = req.body;
 
@@ -18,8 +21,14 @@ router.post('/google', async (req, res) => {
         }
 
         // Verify the Firebase ID token
-        const decoded = await admin.auth().verifyIdToken(token);
+        decoded = await admin.auth().verifyIdToken(token);
+    } catch (err) {
+        console.error('[AuthRoute] Firebase Token Error:', err.message);
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
 
+    // 2. Upsert into PostgreSQL
+    try {
         const { uid, email, name, picture } = decoded;
 
         // Upsert user into PostgreSQL (ignore if already exists)
@@ -32,8 +41,35 @@ router.post('/google', async (req, res) => {
 
         return res.json({ success: true, uid, email, name });
     } catch (err) {
-        console.error('[AuthRoute] Error verifying token:', err.message);
-        return res.status(401).json({ error: 'Invalid or expired token' });
+        console.error('[AuthRoute] Database Insertion Error:', err.message);
+        return res.status(500).json({ error: 'Failed to save user to database' });
+    }
+});
+
+/**
+ * POST /auth/wallet
+ * Receives a wallet address from the frontend and upserts the user in PostgreSQL.
+ */
+router.post('/wallet', async (req, res) => {
+    try {
+        const { wallet_address } = req.body;
+
+        if (!wallet_address) {
+            return res.status(400).json({ error: 'Missing wallet address' });
+        }
+
+        // Upsert user into PostgreSQL (ignore if already exists)
+        await pool.query(
+            `INSERT INTO users (wallet_address)
+             VALUES ($1)
+             ON CONFLICT (wallet_address) DO NOTHING`,
+            [wallet_address]
+        );
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('[AuthRoute] Wallet Auth Error:', err.message);
+        return res.status(500).json({ error: 'Failed' });
     }
 });
 
