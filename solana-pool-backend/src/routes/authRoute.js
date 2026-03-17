@@ -59,6 +59,7 @@ router.post('/wallet', async (req, res) => {
         }
 
         // Upsert user into PostgreSQL (ignore if already exists)
+        // NOTE: This requires a UNIQUE constraint on wallet_address column
         await pool.query(
             `INSERT INTO users (wallet_address)
              VALUES ($1)
@@ -66,10 +67,12 @@ router.post('/wallet', async (req, res) => {
             [wallet_address]
         );
 
+        console.log(`[AuthRoute] Wallet synced: ${wallet_address}`);
         return res.json({ success: true });
     } catch (err) {
         console.error('[AuthRoute] Wallet Auth Error:', err.message);
-        return res.status(500).json({ error: 'Failed' });
+        console.error('[AuthRoute] Stack:', err.stack);
+        return res.status(500).json({ error: 'Failed', details: err.message });
     }
 });
 
