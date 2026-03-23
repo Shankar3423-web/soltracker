@@ -25,6 +25,7 @@ const { unixToDate } = require('../utils/helpers');
 const { ensureTokenExists,
     enrichPoolSymbols } = require('../services/metadataService');
 const { aggregatePool } = require('../services/aggregationService');
+const { processSwapForCandles } = require('../services/ohlcvService');
 
 const BASE58_RE = /^[1-9A-HJ-NP-Za-km-z]{40,100}$/;
 
@@ -104,6 +105,14 @@ router.post('/', async (req, res, next) => {
                         await ensureTokenExists(event.quoteMint);
                         await enrichPoolSymbols(event.poolAddress, event.baseMint, event.quoteMint);
                         await aggregatePool(event.poolAddress);
+
+                        // NEW: real-time chart aggregation (OHLC)
+                        await processSwapForCandles({
+                            poolAddress: event.poolAddress,
+                            price: event.price,
+                            blockTime: blockTimeDate,
+                            usdValue: usdValue
+                        });
                     } catch (e) {
                         console.warn('[Route] Post-swap enrichment error:', e.message);
                     }

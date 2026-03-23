@@ -24,6 +24,11 @@
  *   GET /pools/:poolAddress/stats
  *     Just the stats row for a single pool (lightweight).
  *     Response: { poolAddress, stats }
+ *
+ *   GET /pools/:poolAddress/candles
+ *     Retrieves OHLCV candle data for charting.
+ *     Query params: resolution (1m|5m|15m|30m|1h|4h|24h), limit
+ *     Response: { poolAddress, resolution, candles: [ {time, open, high, low, close, volume}, ... ] }
  */
 
 const express = require('express');
@@ -232,6 +237,47 @@ router.get('/:poolAddress/stats', async (req, res, next) => {
             return res.status(404).json({ error: `No stats found for pool: ${poolAddress}` });
         }
         return res.json({ poolAddress, stats: formatStats(stats) });
+    } catch (err) {
+        next(err);
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  GET /pools/:poolAddress/candles
+//  Retrieves candle data for charting libraries (like Lightweight Charts).
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/:poolAddress/candles', async (req, res, next) => {
+    try {
+        const { poolAddress } = req.params;
+        const resolution = req.query.resolution || '5m';
+        const limit = parsePositiveInt(req.query.limit, 1000);
+
+        // Fetch data sorted by time bucket (Ascending)
+        const result = await db.query(
+            `SELECT time_bucket, open_price, high_price, low_price, close_price, volume_usd
+             FROM pool_candles
+             WHERE pool_address = $1 AND resolution = $2
+             ORDER BY time_bucket ASC
+             LIMIT $3`,
+            [poolAddress, resolution, Math.min(limit, 2000)]
+        );
+
+        // Format for Charting Libraries (time must be in Unix Seconds)
+        const candles = result.rows.map(row => ({
+            time: Math.floor(new Date(row.time_bucket).getTime() / 1000),
+            open: Number(row.open_price),
+            high: Number(row.high_price),
+            low: Number(row.low_price),
+            close: Number(row.close_price),
+            volume: Number(row.volume_usd)
+        }));
+
+        return res.json({
+            poolAddress,
+            resolution,
+            count: candles.length,
+            candles
+        });
     } catch (err) {
         next(err);
     }
