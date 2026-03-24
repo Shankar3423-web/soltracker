@@ -3,6 +3,10 @@ import { createChart, ColorType, CrosshairMode } from 'lightweight-charts';
 import { fetchPoolCandles } from '../utils/api';
 import './CandleChart.css';
 
+// Poll interval: 30s for live tabs, 60s for ALL
+const POLL_INTERVAL_LIVE = 30_000;
+const POLL_INTERVAL_ALL  = 60_000;
+
 /**
  * CandleChart.jsx — DexScreener Level Candlestick Chart
  *
@@ -31,16 +35,19 @@ function formatPrice(p) {
 
 export default function CandleChart({ poolAddress }) {
     const containerRef = useRef(null);
-    const chartRef = useRef(null);       // lightweight-charts instance
-    const candleRef = useRef(null);      // candlestick series
-    const volRef = useRef(null);         // volume series
-    const resizeObs = useRef(null);
+    const chartRef   = useRef(null);   // lightweight-charts instance
+    const candleRef  = useRef(null);   // candlestick series
+    const volRef     = useRef(null);   // volume series
+    const resizeObs  = useRef(null);
+    const pollTimer  = useRef(null);   // auto-refresh interval
+    const lastCandles= useRef([]);     // keep last known candles for diffing
 
-    const [tab, setTab] = useState('ALL');   // Default to ALL so old data always shows
+    const [tab, setTab] = useState('ALL');
     const [loading, setLoading] = useState(true);
     const [noData, setNoData] = useState(false);
     const [ohlc, setOhlc] = useState(null);
     const [candleCount, setCandleCount] = useState(0);
+    const [lastRefresh, setLastRefresh] = useState(null); // timestamp of last poll
 
     // ── Build / rebuild chart when pool or tab changes ─────────────────────────
     const buildChart = useCallback(async () => {
@@ -197,13 +204,71 @@ export default function CandleChart({ poolAddress }) {
         }
     }, [poolAddress, tab]);
 
+    // ── Live polling: update chart data without full redraw ────────────────────
+    const pollForUpdates = useCallback(async () => {
+        if (!candleRef.current || !volRef.current || !chartRef.current) return;
+        try {
+            const apiRes = API_RES_MAP[tab] || '24h';
+            const limit  = tab === 'ALL' ? 2000 : 1000;
+            const data   = await fetchPoolCandles(poolAddress, apiRes, limit);
+            const rawCandles = data?.candles || [];
+            if (rawCandles.length === 0) return;
+
+            const seen = new Set();
+            const fresh = rawCandles
+                .map(c => ({
+                    time: Number(c.time),
+                    open: Number(c.open) || 0,
+                    high: Number(c.high) || 0,
+                    low:  Number(c.low)  || 0,
+                    close: Number(c.close) || 0,
+                    volume: Number(c.volume) || 0,
+                }))
+                .filter(c => { if (seen.has(c.time) || c.high === 0) return false; seen.add(c.time); return true; })
+                .sort((a, b) => a.time - b.time);
+
+            const prev = lastCandles.current;
+
+            // If the dataset grew (new candles arrived), do a full setData
+            if (fresh.length !== prev.length) {
+                candleRef.current.setData(fresh.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+                volRef.current.setData(fresh.map(({ time, volume, open, close }) => ({
+                    time, value: volume,
+                    color: close >= open ? 'rgba(32,201,151,0.35)' : 'rgba(255,73,118,0.35)',
+                })));
+                lastCandles.current = fresh;
+                setCandleCount(fresh.length);
+            } else {
+                // Only the last candle changed — update just that point (no flash)
+                const last = fresh[fresh.length - 1];
+                candleRef.current.update({ time: last.time, open: last.open, high: last.high, low: last.low, close: last.close });
+                volRef.current.update({ time: last.time, value: last.volume, color: last.close >= last.open ? 'rgba(32,201,151,0.35)' : 'rgba(255,73,118,0.35)' });
+                lastCandles.current = fresh;
+            }
+
+            setOhlc(fresh[fresh.length - 1]);
+            setLastRefresh(new Date());
+        } catch (err) {
+            console.warn('[Chart] Poll error (non-fatal):', err.message);
+        }
+    }, [poolAddress, tab]);
+
     useEffect(() => {
+        // Stop any previous poll
+        if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null; }
+
         buildChart();
+
+        // Start new poll after initial load
+        const interval = tab === 'ALL' ? POLL_INTERVAL_ALL : POLL_INTERVAL_LIVE;
+        pollTimer.current = setInterval(pollForUpdates, interval);
+
         return () => {
+            if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null; }
             if (chartRef.current) { try { chartRef.current.remove(); } catch (_) {} chartRef.current = null; }
             if (resizeObs.current) { resizeObs.current.disconnect(); resizeObs.current = null; }
         };
-    }, [buildChart]);
+    }, [buildChart, pollForUpdates, tab]);
 
     return (
         <div className="dsc-chart-wrap">
@@ -234,6 +299,7 @@ export default function CandleChart({ poolAddress }) {
                         <span>L <span className="dsc-ohlc-v red">{formatPrice(ohlc.low)}</span></span>
                         <span>C <span className="dsc-ohlc-v">{formatPrice(ohlc.close)}</span></span>
                         {candleCount > 0 && <span className="dsc-ohlc-cnt">{candleCount} candles</span>}
+                        <span className="dsc-live-dot" title={lastRefresh ? `Last updated: ${lastRefresh.toLocaleTimeString()}` : 'Auto-refreshing'} />
                     </div>
                 )}
             </div>

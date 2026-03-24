@@ -88,6 +88,23 @@
     margin-left: 4px;
 }
 
+/* Pulsing green dot — shows chart is live / auto-refreshing */
+.dsc-live-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #20c997;
+    margin-left: 6px;
+    animation: dsc-live-pulse 2s ease-in-out infinite;
+    vertical-align: middle;
+    cursor: help;
+}
+@keyframes dsc-live-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.35; transform: scale(0.7); }
+}
+
 /* Canvas */
 .dsc-canvas {
     position: relative;
