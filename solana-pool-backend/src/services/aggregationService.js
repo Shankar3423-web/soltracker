@@ -20,113 +20,51 @@ const db = require('../config/db');
 const { upsertPoolStats } = require('../repositories/poolStatsRepository');
 
 /**
- * Aggregate stats for every pool that had at least one swap in the last 24h.
- * Also refreshes pools with existing stats (volume drops to 0 when no swaps).
- *
- * @returns {Promise<number>} number of pools updated
+ * Aggregate stats for every pool that has been active.
+ * Optimized for low-memory (512MB) environments like Render Free Tier.
+ * Processes pools sequentially to avoid massive memory spikes.
  */
 async function aggregateAllPools() {
     try {
-        // Single query: compute all windows + price + makers in one pass
-        const result = await db.query(`
-      WITH recent AS (
-        SELECT
-          pool_address,
-          swap_side,
-          wallet,
-          CAST(usd_value AS DOUBLE PRECISION)  AS usd_value,
-          CAST(price     AS DOUBLE PRECISION)  AS price,
-          block_time
-        FROM swaps
-        WHERE block_time > NOW() - INTERVAL '24 hours'
-          AND usd_value IS NOT NULL
-      ),
-      agg AS (
-        SELECT
-          pool_address,
-          SUM(usd_value)                                        AS volume_24h,
-          SUM(CASE WHEN block_time > NOW() - INTERVAL '6 hours'  THEN usd_value ELSE 0 END) AS volume_6h,
-          SUM(CASE WHEN block_time > NOW() - INTERVAL '1 hour'   THEN usd_value ELSE 0 END) AS volume_1h,
-          COUNT(*)                                              AS tx_count_24h,
-          SUM(CASE WHEN swap_side = 'buy'  THEN 1 ELSE 0 END)  AS buys_24h,
-          SUM(CASE WHEN swap_side = 'sell' THEN 1 ELSE 0 END)  AS sells_24h,
-          COUNT(DISTINCT wallet)                                AS makers_24h
-        FROM recent
-        GROUP BY pool_address
-      ),
-      latest_price AS (
-        SELECT DISTINCT ON (pool_address)
-          pool_address,
-          price AS current_price,
-          block_time
-        FROM swaps
-        WHERE price IS NOT NULL
-        ORDER BY pool_address, block_time DESC
-      ),
-      price_24h_ago AS (
-        SELECT DISTINCT ON (pool_address)
-          pool_address,
-          price AS old_price
-        FROM swaps
-        WHERE price IS NOT NULL
-          AND block_time BETWEEN NOW() - INTERVAL '25 hours'
-                             AND NOW() - INTERVAL '23 hours'
-        ORDER BY pool_address, block_time DESC
-      )
-      SELECT
-        agg.pool_address,
-        agg.volume_24h,
-        agg.volume_6h,
-        agg.volume_1h,
-        agg.tx_count_24h,
-        agg.buys_24h,
-        agg.sells_24h,
-        agg.makers_24h,
-        lp.current_price,
-        CASE
-          WHEN p24.old_price IS NOT NULL AND p24.old_price > 0
-          THEN ROUND(((lp.current_price - p24.old_price) / p24.old_price * 100)::NUMERIC, 2)
-          ELSE NULL
-        END AS price_change_24h
-      FROM agg
-      LEFT JOIN latest_price  lp  ON lp.pool_address  = agg.pool_address
-      LEFT JOIN price_24h_ago p24 ON p24.pool_address = agg.pool_address
-    `);
+        // 1. Get the list of active pool addresses first (filtered to last 24h activity)
+        const poolsResult = await db.query(`
+            SELECT DISTINCT pool_address 
+            FROM swaps 
+            WHERE block_time > NOW() - INTERVAL '24 hours'
+        `);
+        
+        const activePools = poolsResult.rows.map(r => r.pool_address);
+        console.log(`[Aggregation] Starting batch update for ${activePools.length} active pools...`);
 
+        // 2. Process each pool individually (or in small serial batches)
+        // This keeps the Node.js memory footprint very small.
         let updated = 0;
-        for (const row of result.rows) {
-            await upsertPoolStats({
-                poolAddress: row.pool_address,
-                price: row.current_price,
-                priceChange24h: row.price_change_24h != null ? Number(row.price_change_24h) : null,
-                volume24h: Number(row.volume_24h ?? 0),
-                volume6h: Number(row.volume_6h ?? 0),
-                volume1h: Number(row.volume_1h ?? 0),
-                liquidity: null,   // filled in separately by liquidityService
-                txCount24h: Number(row.tx_count_24h ?? 0),
-                buys24h: Number(row.buys_24h ?? 0),
-                sells24h: Number(row.sells_24h ?? 0),
-                makers24h: Number(row.makers_24h ?? 0),
-            });
+        for (const address of activePools) {
+            await aggregatePool(address);
             updated++;
+            
+            // Optional: tiny delay every 10 pools to yield the event loop
+            if (updated % 10 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
         }
 
-        // Zero out pools that had swaps before but nothing in the last 24h
+        // 3. Maintenance: Zero out inactive pools (pools that didn't swap in last 24h)
         await db.query(`
-      UPDATE pool_stats
-      SET volume_24h = 0, volume_6h = 0, volume_1h = 0,
-          tx_count_24h = 0, buys_24h = 0, sells_24h = 0,
-          makers_24h = 0, updated_at = NOW()
-      WHERE pool_address NOT IN (
-        SELECT DISTINCT pool_address FROM swaps
-        WHERE block_time > NOW() - INTERVAL '24 hours'
-      )
-    `);
+            UPDATE pool_stats
+            SET volume_24h = 0, volume_6h = 0, volume_1h = 0,
+                tx_count_24h = 0, buys_24h = 0, sells_24h = 0,
+                makers_24h = 0, updated_at = NOW()
+            WHERE pool_address NOT IN (
+                SELECT DISTINCT pool_address FROM swaps
+                WHERE block_time > NOW() - INTERVAL '24 hours'
+            )
+        `);
 
-        console.log(`[Aggregation] Updated stats for ${updated} pools`);
+        console.log(`[Aggregation] Finished updating stats for ${updated} pools.`);
         return updated;
     } catch (err) {
-        console.error('[Aggregation] aggregateAllPools failed:', err.message);
+        console.error('[Aggregation] aggregateAllPools optimization-run failed:', err.message);
         return 0;
     }
 }

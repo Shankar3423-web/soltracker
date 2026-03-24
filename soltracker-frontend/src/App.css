@@ -1,0 +1,50 @@
+.app {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.app-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.app-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.app-left {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.app-full-view {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-width: 0;
+}
+
+@media (max-width: 880px) {
+    .app-body {
+        flex-direction: column;
+    }
+
+    .app-left {
+        flex: none;
+        height: 42%;
+    }
+
+    .app-right {
+        width: 100%;
+        flex: 1;
+        border-top: 1px solid var(--border);
+    }
+}
