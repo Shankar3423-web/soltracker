@@ -1,106 +1,150 @@
-.pd-chart-container {
+/* ──────────────────────────────────────────────────────────────
+   CandleChart.css — DexScreener-style chart container
+   ────────────────────────────────────────────────────────────── */
+
+.dsc-chart-wrap {
     width: 100%;
     background: #0d0d12;
-    border-radius: 4px;
-    margin-bottom: 24px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    overflow: hidden;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
     display: flex;
     flex-direction: column;
 }
 
-.pd-chart-toolbar {
+/* Toolbar */
+.dsc-toolbar {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 8px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    gap: 8px;
+    padding: 6px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
     background: #121217;
     flex-wrap: wrap;
+    min-height: 38px;
+    flex-shrink: 0;
 }
 
-.pd-chart-selectors {
+/* Tab group */
+.dsc-tabs {
     display: flex;
+    align-items: center;
     gap: 2px;
-    background: rgba(0, 0, 0, 0.2);
-    padding: 2px;
-    border-radius: 4px;
 }
 
-.pd-chart-t-btn {
+.dsc-tab {
     background: transparent;
     border: none;
     color: #7b8099;
     font-size: 11px;
     font-weight: 700;
+    letter-spacing: 0.04em;
     padding: 4px 8px;
     border-radius: 3px;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: color 0.12s, background 0.12s;
 }
 
-.pd-chart-t-btn:hover {
+.dsc-tab:hover {
+    color: #d0d3e0;
+    background: rgba(255,255,255,0.05);
+}
+
+.dsc-tab.active {
     color: #fff;
-    background: rgba(255, 255, 255, 0.05);
+    background: #2a2e3e;
 }
 
-.pd-chart-t-btn.active {
-    color: #fff;
-    background: #2a2e39;
+/* History / ALL tab — slight accent */
+.dsc-tab.history { color: #9b59b6; }
+.dsc-tab.history:hover { background: rgba(155,89,182,0.12); color: #c39be8; }
+.dsc-tab.history.active { background: rgba(155,89,182,0.2); color: #c39be8; border: 1px solid rgba(155,89,182,0.35); }
+
+/* Visual divider between live tabs and ALL tab */
+.dsc-tab-div {
+    width: 1px;
+    height: 16px;
+    background: rgba(255,255,255,0.1);
+    margin: 0 4px;
+    flex-shrink: 0;
 }
 
-/* OHLC Display */
-.pd-chart-ohlc {
+/* OHLC bar */
+.dsc-ohlc {
     display: flex;
     gap: 12px;
-    font-family: 'Roboto Mono', monospace;
     font-size: 11px;
+    font-family: 'Roboto Mono', 'Courier New', monospace;
     color: #7b8099;
+    flex-wrap: wrap;
+    margin-left: 6px;
 }
 
-.ohlc-i {
-    display: flex;
-    gap: 4px;
+.dsc-ohlc-v { color: #d0d3e0; margin-left: 3px; font-weight: 600; }
+.dsc-ohlc-v.green { color: #20c997; }
+.dsc-ohlc-v.red   { color: #ff4976; }
+
+.dsc-ohlc-cnt {
+    color: #4a4f6a;
+    font-size: 10px;
+    margin-left: 4px;
 }
 
-.ohlc-v {
-    color: #e8eaf0;
-    font-weight: 600;
-}
-
-.pd-chart-canvas-area {
+/* Canvas */
+.dsc-canvas {
     position: relative;
     width: 100%;
-    min-height: 450px;
+    min-height: 400px;
 }
 
-/* Loading Effects */
-.pd-chart-loading-overlay {
+/* Overlay (loading / no-data) */
+.dsc-overlay {
     position: absolute;
     inset: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 16px;
-    color: #7b8099;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.2em;
+    gap: 10px;
     background: #0d0d12;
-    z-index: 10;
+    z-index: 5;
+    text-align: center;
+    padding: 24px;
 }
 
-.pd-chart-pulse {
-    width: 32px;
-    height: 32px;
-    border: 2px solid #20c997;
+/* Pulse loader */
+.dsc-pulse {
+    width: 36px;
+    height: 36px;
+    border: 2px solid rgba(32,201,151,0.2);
+    border-top-color: #20c997;
     border-radius: 50%;
-    animation: chart-pulse 1.2s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite;
+    animation: dsc-spin 0.7s linear infinite;
 }
+@keyframes dsc-spin { to { transform: rotate(360deg); } }
 
-@keyframes chart-pulse {
-    0% { transform: scale(0.8); opacity: 0.8; }
-    50% { transform: scale(1.2); opacity: 0.3; }
-    100% { transform: scale(0.8); opacity: 0.8; }
+/* No-data state */
+.dsc-nodata-icon { font-size: 32px; margin-bottom: 4px; }
+.dsc-nodata-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #d0d3e0;
 }
+.dsc-nodata-desc {
+    font-size: 12px;
+    color: #7b8099;
+    white-space: pre-line;
+    max-width: 360px;
+    line-height: 1.6;
+}
+.dsc-nodata-btn {
+    margin-top: 8px;
+    background: rgba(155,89,182,0.2);
+    border: 1px solid rgba(155,89,182,0.4);
+    color: #c39be8;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.dsc-nodata-btn:hover { background: rgba(155,89,182,0.35); }

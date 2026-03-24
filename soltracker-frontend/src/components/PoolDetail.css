@@ -10,7 +10,7 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    overflow: hidden;
+    overflow-y: auto;   /* Allow the whole left panel to scroll */
     border-right: 1px solid var(--border);
 }
 
@@ -86,10 +86,9 @@
 .pd-m-pct.down { color: var(--red); }
 
 .pd-txs {
-    flex: 1;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    min-height: 280px;   /* Always visible even when chart is tall */
     background: var(--bg-surface);
 }
 
@@ -379,7 +378,7 @@
 }
 
 .pd-tx-scroll {
-    flex: 1;
+    max-height: 420px;
     overflow-y: auto;
     overflow-x: auto;
 }
