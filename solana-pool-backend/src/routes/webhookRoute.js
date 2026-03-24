@@ -39,6 +39,7 @@ const { unixToDate } = require('../utils/helpers');
 const { ensureTokenExists,
     enrichPoolSymbols } = require('../services/metadataService');
 const { aggregatePool } = require('../services/aggregationService');
+const { processSwapForCandles } = require('../services/ohlcvService'); // ← chart candles
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  SERIAL QUEUE — prevents parallel RPC calls that cause 429s
@@ -186,13 +187,20 @@ async function processTransaction(signature) {
                     '| USD:', usdValue?.toFixed(4) ?? 'n/a'
                 );
 
-                // Fire-and-forget: metadata + pool stats (never blocks the queue)
+                // Fire-and-forget: metadata + pool stats + CHART CANDLES (never blocks the queue)
                 setImmediate(async () => {
                     try {
                         await ensureTokenExists(event.baseMint);
                         await ensureTokenExists(event.quoteMint);
                         await enrichPoolSymbols(event.poolAddress, event.baseMint, event.quoteMint);
                         await aggregatePool(event.poolAddress);
+                        // ← Update candlestick chart data for ALL resolutions
+                        await processSwapForCandles({
+                            poolAddress:  event.poolAddress,
+                            price:        event.price,
+                            blockTime:    blockTimeDate,
+                            usdValue:     usdValue,
+                        });
                     } catch (e) {
                         console.warn('[Webhook] Enrichment error:', e.message);
                     }
