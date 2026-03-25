@@ -142,6 +142,7 @@ async function aggregateAllPools() {
  * @returns {Promise<void>}
  */
 async function aggregatePool(poolAddress) {
+    try {
         const result = await db.query(`
       WITH windows AS (
         SELECT 
