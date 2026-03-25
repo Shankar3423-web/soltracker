@@ -39,6 +39,7 @@ const { unixToDate } = require('../utils/helpers');
 const { ensureTokenExists,
     enrichPoolSymbols } = require('../services/metadataService');
 const { aggregatePool } = require('../services/aggregationService');
+const { processSwapForCandles } = require('../services/ohlcvService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  SERIAL QUEUE — prevents parallel RPC calls that cause 429s
@@ -193,6 +194,12 @@ async function processTransaction(signature) {
                         await ensureTokenExists(event.quoteMint);
                         await enrichPoolSymbols(event.poolAddress, event.baseMint, event.quoteMint);
                         await aggregatePool(event.poolAddress);
+                        await processSwapForCandles({
+                            poolAddress: event.poolAddress,
+                            price: event.price,
+                            usdValue: usdValue,
+                            blockTime: blockTimeDate
+                        });
                     } catch (e) {
                         console.warn('[Webhook] Enrichment error:', e.message);
                     }

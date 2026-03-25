@@ -9,39 +9,66 @@ const db = require('../config/db');
 async function upsertPoolStats({
     poolAddress,
     price = null,
+    priceChange5m = null,
+    priceChange1h = null,
+    priceChange6h = null,
     priceChange24h = null,
-    volume24h = null,
-    volume6h = null,
-    volume1h = null,
+    volume5m = 0,
+    volume1h = 0,
+    volume6h = 0,
+    volume24h = 0,
+    buyVolume24h = 0,
+    sellVolume24h = 0,
+    buyers24h = 0,
+    sellers24h = 0,
     liquidity = null,
     txCount24h = 0,
     buys24h = 0,
     sells24h = 0,
     makers24h = 0,
+    fdv = null,
+    marketCap = null,
 }) {
     const r = await db.query(
         `INSERT INTO pool_stats
-       (pool_address, price, price_change_24h,
-        volume_24h, volume_6h, volume_1h,
+       (pool_address, price,
+        price_change_5m, price_change_1h, price_change_6h, price_change_24h,
+        volume_5m, volume_1h, volume_6h, volume_24h,
+        buy_volume_24h, sell_volume_24h, buyers_24h, sellers_24h,
         liquidity, tx_count_24h, buys_24h, sells_24h, makers_24h,
-        updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOW())
-     ON CONFLICT (pool_address) DO UPDATE SET
-       price            = EXCLUDED.price,
-       price_change_24h = EXCLUDED.price_change_24h,
-       volume_24h       = EXCLUDED.volume_24h,
-       volume_6h        = EXCLUDED.volume_6h,
-       volume_1h        = EXCLUDED.volume_1h,
-       liquidity        = EXCLUDED.liquidity,
-       tx_count_24h     = EXCLUDED.tx_count_24h,
-       buys_24h         = EXCLUDED.buys_24h,
-       sells_24h        = EXCLUDED.sells_24h,
-       makers_24h       = EXCLUDED.makers_24h,
-       updated_at       = NOW()
-     RETURNING *`,
-        [poolAddress, price, priceChange24h,
-            volume24h, volume6h, volume1h,
-            liquidity, txCount24h, buys24h, sells24h, makers24h]
+        fdv, market_cap, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21, NOW())
+      ON CONFLICT (pool_address) DO UPDATE SET
+        price            = EXCLUDED.price,
+        price_change_5m  = EXCLUDED.price_change_5m,
+        price_change_1h  = EXCLUDED.price_change_1h,
+        price_change_6h  = EXCLUDED.price_change_6h,
+        price_change_24h = EXCLUDED.price_change_24h,
+        volume_5m        = EXCLUDED.volume_5m,
+        volume_1h        = EXCLUDED.volume_1h,
+        volume_6h        = EXCLUDED.volume_6h,
+        volume_24h       = EXCLUDED.volume_24h,
+        buy_volume_24h   = EXCLUDED.buy_volume_24h,
+        sell_volume_24h  = EXCLUDED.sell_volume_24h,
+        buyers_24h       = EXCLUDED.buyers_24h,
+        sellers_24h      = EXCLUDED.sellers_24h,
+        liquidity        = EXCLUDED.liquidity,
+        tx_count_24h     = EXCLUDED.tx_count_24h,
+        buys_24h         = EXCLUDED.buys_24h,
+        sells_24h        = EXCLUDED.sells_24h,
+        makers_24h       = EXCLUDED.makers_24h,
+        fdv              = EXCLUDED.fdv,
+        market_cap       = EXCLUDED.market_cap,
+        updated_at       = NOW()
+      RETURNING *`,
+        [
+            poolAddress, price,
+            priceChange5m, priceChange1h, priceChange6h, priceChange24h,
+            volume5m, volume1h, volume6h, volume24h,
+            buyVolume24h, sellVolume24h, buyers24h, sellers24h,
+            liquidity, txCount24h, buys24h, sells24h, makers24h,
+            fdv, marketCap
+        ]
     );
     return r.rows[0];
 }

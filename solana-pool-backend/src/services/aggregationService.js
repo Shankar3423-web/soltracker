@@ -18,6 +18,9 @@
 
 const db = require('../config/db');
 const { upsertPoolStats } = require('../repositories/poolStatsRepository');
+const { getTokenSupply } = require('./metadataService');
+const { getSolPrice } = require('./priceService');
+const { WSOL_MINT } = require('../config/constants');
 
 /**
  * Aggregate stats for every pool that had at least one swap in the last 24h.
@@ -27,29 +30,28 @@ const { upsertPoolStats } = require('../repositories/poolStatsRepository');
  */
 async function aggregateAllPools() {
     try {
-        // Single query: compute all windows + price + makers in one pass
         const result = await db.query(`
       WITH recent AS (
         SELECT
           pool_address,
-          swap_side,
+          TRIM(LOWER(swap_side)) AS side,
           wallet,
           CAST(usd_value AS DOUBLE PRECISION)  AS usd_value,
           CAST(price     AS DOUBLE PRECISION)  AS price,
           block_time
         FROM swaps
-        WHERE block_time > NOW() - INTERVAL '24 hours'
+        WHERE block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'
           AND usd_value IS NOT NULL
       ),
       agg AS (
         SELECT
           pool_address,
           SUM(usd_value)                                        AS volume_24h,
-          SUM(CASE WHEN block_time > NOW() - INTERVAL '6 hours'  THEN usd_value ELSE 0 END) AS volume_6h,
-          SUM(CASE WHEN block_time > NOW() - INTERVAL '1 hour'   THEN usd_value ELSE 0 END) AS volume_1h,
+          SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '6 hours'  THEN usd_value ELSE 0 END) AS volume_6h,
+          SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour'   THEN usd_value ELSE 0 END) AS volume_1h,
           COUNT(*)                                              AS tx_count_24h,
-          SUM(CASE WHEN swap_side = 'buy'  THEN 1 ELSE 0 END)  AS buys_24h,
-          SUM(CASE WHEN swap_side = 'sell' THEN 1 ELSE 0 END)  AS sells_24h,
+          SUM(CASE WHEN side = 'buy'  THEN 1 ELSE 0 END)       AS buys_24h,
+          SUM(CASE WHEN side = 'sell' THEN 1 ELSE 0 END)       AS sells_24h,
           COUNT(DISTINCT wallet)                                AS makers_24h
         FROM recent
         GROUP BY pool_address
@@ -69,8 +71,8 @@ async function aggregateAllPools() {
           price AS old_price
         FROM swaps
         WHERE price IS NOT NULL
-          AND block_time BETWEEN NOW() - INTERVAL '25 hours'
-                             AND NOW() - INTERVAL '23 hours'
+          AND block_time BETWEEN (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '25 hours'
+                             AND (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '23 hours'
         ORDER BY pool_address, block_time DESC
       )
       SELECT
@@ -140,68 +142,100 @@ async function aggregateAllPools() {
  * @returns {Promise<void>}
  */
 async function aggregatePool(poolAddress) {
-    try {
         const result = await db.query(`
-      WITH recent AS (
-        SELECT swap_side, wallet,
-               CAST(usd_value AS DOUBLE PRECISION) AS usd_value,
-               CAST(price     AS DOUBLE PRECISION) AS price,
-               block_time
+      WITH windows AS (
+        SELECT 
+           TRIM(LOWER(swap_side)) AS side, 
+           wallet, 
+           CAST(usd_value AS DOUBLE PRECISION) AS usd_value,
+           CAST(price AS DOUBLE PRECISION) AS price,
+           block_time
         FROM swaps
-        WHERE pool_address = $1
-          AND block_time > NOW() - INTERVAL '24 hours'
+        WHERE pool_address = $1 
+          AND block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '25 hours'
+      ),
+      metrics AS (
+        SELECT
+           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '5 minutes' THEN usd_value ELSE 0 END), 0) AS volume_5m,
+           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour'    THEN usd_value ELSE 0 END), 0) AS volume_1h,
+           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '6 hours'   THEN usd_value ELSE 0 END), 0) AS volume_6h,
+           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'  THEN usd_value ELSE 0 END), 0) AS volume_24h,
+           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'buy'  THEN usd_value ELSE 0 END), 0) AS buy_volume_24h,
+           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'sell' THEN usd_value ELSE 0 END), 0) AS sell_volume_24h,
+           COUNT(*) FILTER (WHERE block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours') AS tx_count_24h,
+           SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'buy'  THEN 1 ELSE 0 END) AS buys_24h,
+           SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'sell' THEN 1 ELSE 0 END) AS sells_24h,
+           COUNT(DISTINCT wallet) FILTER (WHERE block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours') AS makers_24h,
+           COUNT(DISTINCT CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'buy'  THEN wallet END) AS buyers_24h,
+           COUNT(DISTINCT CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'sell' THEN wallet END) AS sellers_24h
+        FROM windows
+      ),
+      prices AS (
+        SELECT 
+           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL ORDER BY block_time DESC LIMIT 1) as current_p,
+           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '5 minutes' ORDER BY block_time DESC LIMIT 1) as p_5m,
+           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour' ORDER BY block_time DESC LIMIT 1) as p_1h,
+           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '6 hours' ORDER BY block_time DESC LIMIT 1) as p_6h,
+           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' ORDER BY block_time DESC LIMIT 1) as p_24h
       )
-      SELECT
-        SUM(usd_value)                                                         AS volume_24h,
-        SUM(CASE WHEN block_time > NOW() - INTERVAL '6 hours'  THEN usd_value ELSE 0 END) AS volume_6h,
-        SUM(CASE WHEN block_time > NOW() - INTERVAL '1 hour'   THEN usd_value ELSE 0 END) AS volume_1h,
-        COUNT(*)                                                               AS tx_count_24h,
-        SUM(CASE WHEN swap_side = 'buy'  THEN 1 ELSE 0 END)                   AS buys_24h,
-        SUM(CASE WHEN swap_side = 'sell' THEN 1 ELSE 0 END)                   AS sells_24h,
-        COUNT(DISTINCT wallet)                                                 AS makers_24h
-      FROM recent
+      SELECT * FROM metrics, prices;
     `, [poolAddress]);
 
-        const row = result.rows[0];
-        if (!row) return;
+        const stats = result.rows[0];
+        if (!stats) return;
 
-        // Get latest price
-        const priceResult = await db.query(
-            `SELECT CAST(price AS DOUBLE PRECISION) AS price
-       FROM swaps
-       WHERE pool_address = $1 AND price IS NOT NULL
-       ORDER BY block_time DESC LIMIT 1`,
-            [poolAddress]
-        );
-        const latestPrice = priceResult.rows[0]?.price ?? null;
+        const latestPrice = stats.current_p;
 
-        // Get price 24h ago for % change
-        const oldPriceResult = await db.query(
-            `SELECT CAST(price AS DOUBLE PRECISION) AS price
-       FROM swaps
-       WHERE pool_address = $1 AND price IS NOT NULL
-         AND block_time BETWEEN NOW() - INTERVAL '25 hours'
-                            AND NOW() - INTERVAL '23 hours'
-       ORDER BY block_time DESC LIMIT 1`,
-            [poolAddress]
-        );
-        const oldPrice = oldPriceResult.rows[0]?.price ?? null;
-        const priceChange24h = (latestPrice && oldPrice && oldPrice > 0)
-            ? Number(((latestPrice - oldPrice) / oldPrice * 100).toFixed(2))
-            : null;
+        // ── CALCULATE MARKET CAP / FDV ───────────────────────────────────────────
+        let fdv = null;
+        let marketCap = null;
+        if (latestPrice && latestPrice > 0) {
+            try {
+                const poolRes = await db.query(
+                    'SELECT base_token_mint, quote_token_mint FROM pools WHERE pool_address = $1 LIMIT 1',
+                    [poolAddress]
+                );
+                const pInfo = poolRes.rows[0];
+                if (pInfo) {
+                    const supply = await getTokenSupply(pInfo.base_token_mint);
+                    if (supply) {
+                        let totalValueUsd = supply * latestPrice;
+                        if (pInfo.quote_token_mint === WSOL_MINT) {
+                            const solPrice = (await getSolPrice()) || 150; 
+                            totalValueUsd *= solPrice;
+                        }
+                        fdv = totalValueUsd;
+                        marketCap = fdv;
+                    }
+                }
+            } catch (err) {
+                console.warn(`[Aggregation] FDV failed for ${poolAddress}:`, err.message);
+            }
+        }
+
+        const calcChange = (cur, old) => (cur && old && old > 0) ? Number(((cur - old) / old * 100).toFixed(2)) : null;
 
         await upsertPoolStats({
             poolAddress,
             price: latestPrice,
-            priceChange24h,
-            volume24h: Number(row.volume_24h ?? 0),
-            volume6h: Number(row.volume_6h ?? 0),
-            volume1h: Number(row.volume_1h ?? 0),
-            liquidity: null,
-            txCount24h: Number(row.tx_count_24h ?? 0),
-            buys24h: Number(row.buys_24h ?? 0),
-            sells24h: Number(row.sells_24h ?? 0),
-            makers24h: Number(row.makers_24h ?? 0),
+            priceChange5m: calcChange(latestPrice, stats.p_5m),
+            priceChange1h: calcChange(latestPrice, stats.p_1h),
+            priceChange6h: calcChange(latestPrice, stats.p_6h),
+            priceChange24h: calcChange(latestPrice, stats.p_24h),
+            volume5m: Number(stats.volume_5m || 0),
+            volume1h: Number(stats.volume_1h || 0),
+            volume6h: Number(stats.volume_6h || 0),
+            volume24h: Number(stats.volume_24h || 0),
+            buyVolume24h: Number(stats.buy_volume_24h || 0),
+            sellVolume24h: Number(stats.sell_volume_24h || 0),
+            buyers24h: Number(stats.buyers_24h || 0),
+            sellers24h: Number(stats.sellers_24h || 0),
+            txCount24h: Number(stats.tx_count_24h || 0),
+            buys24h: Number(stats.buys_24h || 0),
+            sells24h: Number(stats.sells_24h || 0),
+            makers24h: Number(stats.makers_24h || 0),
+            fdv,
+            marketCap
         });
     } catch (err) {
         console.warn(`[Aggregation] aggregatePool(${poolAddress}) failed:`, err.message);

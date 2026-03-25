@@ -173,4 +173,33 @@ async function enrichPoolSymbols(poolAddress, baseMint, quoteMint) {
     }
 }
 
-module.exports = { ensureTokenExists, enrichPoolSymbols };
+/**
+ * Fetch the total on-chain supply of a token for Market Cap / FDV.
+ * Uses the Solana RPC getTokenSupply method.
+ *
+ * @param {string} mint
+ * @returns {Promise<number|null>}  Human-readable total supply
+ */
+async function getTokenSupply(mint) {
+    const rpcUrl = process.env.HELIUS_RPC_URL;
+    if (!rpcUrl || !mint) return null;
+
+    try {
+        const res = await axios.post(rpcUrl, {
+            jsonrpc: '2.0',
+            id: 'supply',
+            method: 'getTokenSupply',
+            params: [mint],
+        }, { timeout: 8000 });
+        const amount = res.data?.result?.value?.uiAmount;
+        if (typeof amount === 'number') return amount;
+        // Fallback for Pump.fun tokens: 1B supply is standard
+        if (mint.toLowerCase().endsWith('pump')) return 1000000000;
+        return null;
+    } catch {
+        if (mint.toLowerCase().endsWith('pump')) return 1000000000;
+        return null;
+    }
+}
+
+module.exports = { ensureTokenExists, enrichPoolSymbols, getTokenSupply };
