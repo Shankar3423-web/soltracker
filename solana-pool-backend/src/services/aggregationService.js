@@ -153,31 +153,31 @@ async function aggregatePool(poolAddress) {
            block_time
         FROM swaps
         WHERE pool_address = $1 
-          AND block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '25 hours'
+          AND block_time > NOW() - INTERVAL '25 hours'
       ),
       metrics AS (
         SELECT
-           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '5 minutes' THEN usd_value ELSE 0 END), 0) AS volume_5m,
-           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour'    THEN usd_value ELSE 0 END), 0) AS volume_1h,
-           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '6 hours'   THEN usd_value ELSE 0 END), 0) AS volume_6h,
-           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'  THEN usd_value ELSE 0 END), 0) AS volume_24h,
-           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'buy'  THEN usd_value ELSE 0 END), 0) AS buy_volume_24h,
-           COALESCE(SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'sell' THEN usd_value ELSE 0 END), 0) AS sell_volume_24h,
-           COUNT(*) FILTER (WHERE block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours') AS tx_count_24h,
-           SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'buy'  THEN 1 ELSE 0 END) AS buys_24h,
-           SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'sell' THEN 1 ELSE 0 END) AS sells_24h,
-           COUNT(DISTINCT wallet) FILTER (WHERE block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours') AS makers_24h,
-           COUNT(DISTINCT CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'buy'  THEN wallet END) AS buyers_24h,
-           COUNT(DISTINCT CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' AND side = 'sell' THEN wallet END) AS sellers_24h
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '5 minutes' THEN usd_value ELSE 0 END), 0) AS volume_5m,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '1 hour'    THEN usd_value ELSE 0 END), 0) AS volume_1h,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '6 hours'   THEN usd_value ELSE 0 END), 0) AS volume_6h,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours'  THEN usd_value ELSE 0 END), 0) AS volume_24h,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'buy'  THEN usd_value ELSE 0 END), 0) AS buy_volume_24h,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'sell' THEN usd_value ELSE 0 END), 0) AS sell_volume_24h,
+           COUNT(*) FILTER (WHERE block_time > NOW() - INTERVAL '24 hours') AS tx_count_24h,
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'buy'  THEN 1 ELSE 0 END) AS buys_24h,
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'sell' THEN 1 ELSE 0 END) AS sells_24h,
+           COUNT(DISTINCT wallet) FILTER (WHERE block_time > NOW() - INTERVAL '24 hours') AS makers_24h,
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'buy'  THEN wallet END) AS buyers_24h,
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'sell' THEN wallet END) AS sellers_24h
         FROM windows
       ),
       prices AS (
         SELECT 
            (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL ORDER BY block_time DESC LIMIT 1) as current_p,
-           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '5 minutes' ORDER BY block_time DESC LIMIT 1) as p_5m,
-           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour' ORDER BY block_time DESC LIMIT 1) as p_1h,
-           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '6 hours' ORDER BY block_time DESC LIMIT 1) as p_6h,
-           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours' ORDER BY block_time DESC LIMIT 1) as p_24h
+           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= NOW() - INTERVAL '5 minutes' ORDER BY block_time DESC LIMIT 1) as p_5m,
+           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= NOW() - INTERVAL '1 hour' ORDER BY block_time DESC LIMIT 1) as p_1h,
+           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= NOW() - INTERVAL '6 hours' ORDER BY block_time DESC LIMIT 1) as p_6h,
+           (SELECT CAST(price AS DOUBLE PRECISION) FROM swaps WHERE pool_address = $1 AND price IS NOT NULL AND block_time <= NOW() - INTERVAL '24 hours' ORDER BY block_time DESC LIMIT 1) as p_24h
       )
       SELECT * FROM metrics, prices;
     `, [poolAddress]);
