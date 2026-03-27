@@ -67,7 +67,7 @@ async function upsertPoolStats({
         buyers_5m, buyers_1h, buyers_6h, buyers_24h,
         sellers_5m, sellers_1h, sellers_6h, sellers_24h,
         liquidity, fdv, market_cap, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44, NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45, NOW())
        ON CONFLICT (pool_address) DO UPDATE SET
         price            = EXCLUDED.price,
         price_change_5m  = EXCLUDED.price_change_5m,
