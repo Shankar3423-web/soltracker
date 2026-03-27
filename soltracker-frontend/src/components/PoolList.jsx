@@ -105,8 +105,6 @@ export default function PoolList({ activeDex, onSelectPool }) {
                             <Th col="txCount24h" label="TXNS" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                             <Th col="volume24h" label="VOLUME" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                             <Th col="makers24h" label="MAKERS" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
-                            <Th col="volume1h" label="1H VOL" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
-                            <Th col="volume6h" label="6H VOL" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                             <Th col="priceChange24h" label="24H %" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                             <Th col="liquidity" label="LIQUIDITY" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} />
                         </tr>
@@ -114,7 +112,7 @@ export default function PoolList({ activeDex, onSelectPool }) {
                     <tbody>
                         {visible.length === 0 ? (
                             <tr>
-                                <td colSpan="11" className="pl-empty">
+                                <td colSpan="9" className="pl-empty">
                                     {search ? 'No pools match your search.' : 'No pools yet — waiting for webhook data.'}
                                 </td>
                             </tr>
@@ -182,8 +180,6 @@ function PoolRow({ pool, rank, onClick }) {
             <td className="r mono">{fmtNum(pool.txCount24h, 0)}</td>
             <td className="r mono">{fmtUsd(pool.volume24h, true)}</td>
             <td className="r mono">{fmtNum(pool.makers24h, 0)}</td>
-            <td className="r mono">{fmtUsd(pool.volume1h, true)}</td>
-            <td className="r mono">{fmtUsd(pool.volume6h, true)}</td>
             <td className="r">
                 {pct != null
                     ? <span className={pct >= 0 ? 'green' : 'red'}>{fmtPct(pct)}</span>

@@ -242,46 +242,6 @@ router.get('/:poolAddress/stats', async (req, res, next) => {
     }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  GET /pools/:poolAddress/candles
-//  Retrieves candle data for charting libraries (like Lightweight Charts).
-// ─────────────────────────────────────────────────────────────────────────────
-router.get('/:poolAddress/candles', async (req, res, next) => {
-    try {
-        const { poolAddress } = req.params;
-        const resolution = req.query.resolution || '5m';
-        const limit = parsePositiveInt(req.query.limit, 1000);
-
-        // Fetch data sorted by time bucket (Ascending)
-        const result = await db.query(
-            `SELECT time_bucket, open_price, high_price, low_price, close_price, volume_usd
-             FROM pool_candles
-             WHERE pool_address = $1 AND resolution = $2
-             ORDER BY time_bucket ASC
-             LIMIT $3`,
-            [poolAddress, resolution, Math.min(limit, 2000)]
-        );
-
-        // Format for Charting Libraries (time must be in Unix Seconds)
-        const candles = result.rows.map(row => ({
-            time: Math.floor(new Date(row.time_bucket).getTime() / 1000),
-            open: Number(row.open_price),
-            high: Number(row.high_price),
-            low: Number(row.low_price),
-            close: Number(row.close_price),
-            volume: Number(row.volume_usd)
-        }));
-
-        return res.json({
-            poolAddress,
-            resolution,
-            count: candles.length,
-            candles
-        });
-    } catch (err) {
-        next(err);
-    }
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Formatters — keep API shape consistent
@@ -300,13 +260,6 @@ function formatPoolSummary(row) {
         baseMint: row.base_token_mint,
         quoteMint: row.quote_token_mint,
         price: row.price != null ? Number(row.price) : null,
-        priceChange5m: row.price_change_5m != null ? Number(row.price_change_5m) : null,
-        priceChange1h: row.price_change_1h != null ? Number(row.price_change_1h) : null,
-        priceChange6h: row.price_change_6h != null ? Number(row.price_change_6h) : null,
-        priceChange24h: row.price_change_24h != null ? Number(row.price_change_24h) : null,
-        volume5m: row.volume_5m != null ? Number(row.volume_5m) : null,
-        volume1h: row.volume_1h != null ? Number(row.volume_1h) : null,
-        volume6h: row.volume_6h != null ? Number(row.volume_6h) : null,
         volume24h: row.volume_24h != null ? Number(row.volume_24h) : null,
         buyVolume24h: row.buy_volume_24h != null ? Number(row.buy_volume_24h) : null,
         sellVolume24h: row.sell_volume_24h != null ? Number(row.sell_volume_24h) : null,
@@ -343,13 +296,6 @@ function formatStats(stats) {
     if (!stats) return null;
     return {
         price: stats.price != null ? Number(stats.price) : null,
-        priceChange5m: stats.price_change_5m != null ? Number(stats.price_change_5m) : null,
-        priceChange1h: stats.price_change_1h != null ? Number(stats.price_change_1h) : null,
-        priceChange6h: stats.price_change_6h != null ? Number(stats.price_change_6h) : null,
-        priceChange24h: stats.price_change_24h != null ? Number(stats.price_change_24h) : null,
-        volume5m: stats.volume_5m != null ? Number(stats.volume_5m) : null,
-        volume1h: stats.volume_1h != null ? Number(stats.volume_1h) : null,
-        volume6h: stats.volume_6h != null ? Number(stats.volume_6h) : null,
         volume24h: stats.volume_24h != null ? Number(stats.volume_24h) : null,
         buyVolume24h: stats.buy_volume_24h != null ? Number(stats.buy_volume_24h) : null,
         sellVolume24h: stats.sell_volume_24h != null ? Number(stats.sell_volume_24h) : null,

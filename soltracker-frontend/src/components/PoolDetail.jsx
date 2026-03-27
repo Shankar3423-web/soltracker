@@ -5,7 +5,6 @@ import {
     fmtUsd, fmtNum, fmtPrice, fmtPct,
     short, timeAgo, dexColor, avatarGrad
 } from '../utils/api';
-import CandlestickChart from './CandlestickChart';
 import './PoolDetail.css';
 
 const SOCKET_URL = process.env.REACT_APP_WS_URL || 'http://localhost:3000';
@@ -123,9 +122,6 @@ export default function PoolDetail({ pool, onClose }) {
                     </div>
                 </div>
 
-                <div className="pd-chart-section">
-                    <CandlestickChart poolAddress={addr} />
-                </div>
 
                 <div className="pd-txs">
                     <div className="pd-tx-head">
@@ -243,9 +239,6 @@ export default function PoolDetail({ pool, onClose }) {
                 </div>
 
                 <div className="pd-timeframes">
-                    <TimeBox label="5M" pct={stats && stats.priceChange5m} />
-                    <TimeBox label="1H" pct={stats && stats.priceChange1h} />
-                    <TimeBox label="6H" pct={stats && stats.priceChange6h} />
                     <TimeBox label="24H" pct={stats && stats.priceChange24h} active />
                 </div>
 
