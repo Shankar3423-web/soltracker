@@ -151,10 +151,19 @@ async function processTransaction(signature) {
             return;
         }
 
-        console.log('[Webhook]', swapEvents.length, 'swap(s) in', signature.slice(0, 20) + '...');
+        // --- 🎯 TARGET POOL FILTER (NEKO/SOL) ---
+        const TARGET_POOL = "Ar48SvQ4UYUwps2x8wrrNgR96qiYLcuyqlruPK6wFQxj";
+        const filteredSwapEvents = swapEvents.filter(event => event.poolAddress === TARGET_POOL);
+
+        if (filteredSwapEvents.length === 0) {
+            // console.log('[Webhook] No swaps for target pool in', signature.slice(0, 20) + '...');
+            return;
+        }
+
+        console.log('[Webhook]', filteredSwapEvents.length, 'swap(s) in', signature.slice(0, 20) + '...');
 
         // Store each swap
-        for (const event of swapEvents) {
+        for (const event of filteredSwapEvents) {
             try {
                 const { dexId } = await ensurePoolExists({
                     dexName: event.dexName,
