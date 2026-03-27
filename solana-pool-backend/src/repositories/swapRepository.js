@@ -59,6 +59,8 @@ async function insertSwap({
     quoteAmount,
     price,
     usdValue,
+    priceUsd = null,
+    priceSol = null,
     swapSide,
     classification,
     slot,
@@ -68,8 +70,9 @@ async function insertSwap({
         `INSERT INTO swaps
        (signature, pool_address, dex_id, wallet,
         base_amount, quote_amount, price, usd_value,
+        price_usd, price_sol,
         swap_side, classification, slot, block_time)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      ON CONFLICT (signature, pool_address) DO NOTHING
      RETURNING *`,
         [
@@ -81,6 +84,8 @@ async function insertSwap({
             roundDecimal(quoteAmount),
             roundDecimal(price),
             roundDecimal(usdValue, 6),
+            roundDecimal(priceUsd),
+            roundDecimal(priceSol),
             swapSide,
             classification,
             slot ?? null,

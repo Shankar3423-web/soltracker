@@ -40,6 +40,7 @@ const { ensureTokenExists,
     enrichPoolSymbols } = require('../services/metadataService');
 const { aggregatePool } = require('../services/aggregationService');
 const { processSwapForCandles } = require('../services/ohlcvService');
+const { broadcastNewSwap, broadcastCandleUpdate } = require('../services/socketService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  SERIAL QUEUE — prevents parallel RPC calls that cause 429s
@@ -165,6 +166,25 @@ async function processTransaction(signature) {
                 const usdValue = await calculateUsdValue(event.quoteAmount, event.quoteMint);
                 const blockTimeDate = event.blockTime ? unixToDate(event.blockTime) : null;
 
+                // Price assignment for priceUsd and priceSol
+                const { WSOL_MINT } = require('../config/constants');
+                const { getSolPrice } = require('../services/priceService');
+                const { safeDivide } = require('../utils/helpers');
+
+                let priceUsd = null;
+                let priceSol = null;
+
+                if (event.quoteMint === WSOL_MINT) {
+                    priceSol = event.price;
+                    const solUsd = await getSolPrice();
+                    priceUsd = priceSol * solUsd;
+                } else {
+                    // Assuming stablecoin if not SOL for simple pairs
+                    priceUsd = event.price;
+                    const solUsd = await getSolPrice();
+                    priceSol = safeDivide(priceUsd, solUsd);
+                }
+
                 await insertSwap({
                     signature: event.signature,
                     poolAddress: event.poolAddress,
@@ -174,6 +194,8 @@ async function processTransaction(signature) {
                     quoteAmount: event.quoteAmount,
                     price: event.price,
                     usdValue,
+                    priceUsd,
+                    priceSol,
                     swapSide: event.swapSide,
                     classification: event.classification,
                     slot: event.slot,
@@ -194,12 +216,30 @@ async function processTransaction(signature) {
                         await ensureTokenExists(event.quoteMint);
                         await enrichPoolSymbols(event.poolAddress, event.baseMint, event.quoteMint);
                         await aggregatePool(event.poolAddress);
-                        await processSwapForCandles({
+                        const updatedCandles = await processSwapForCandles({
                             poolAddress: event.poolAddress,
                             price: event.price,
                             usdValue: usdValue,
                             blockTime: blockTimeDate
                         });
+
+                        // REAL-TIME BROADCAST: Push to room listeners
+                        broadcastNewSwap(event.poolAddress, {
+                            signature: event.signature,
+                            wallet,
+                            baseAmount: event.baseAmount,
+                            quoteAmount: event.quoteAmount,
+                            price: event.price,
+                            usdValue,
+                            swapSide: event.swapSide,
+                            blockTime: blockTimeDate
+                        });
+
+                        if (updatedCandles && updatedCandles.length > 0) {
+                            // Broadcast all timeframe updates (1m, 5m, etc.)
+                            updatedCandles.forEach(c => broadcastCandleUpdate(event.poolAddress, c));
+                        }
+
                     } catch (e) {
                         console.warn('[Webhook] Enrichment error:', e.message);
                     }

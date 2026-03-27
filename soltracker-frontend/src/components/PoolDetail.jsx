@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { io } from 'socket.io-client';
 import {
-    fetchPoolDetail, fetchPoolTxns,
+    fetchPoolDetail, 
     fmtUsd, fmtNum, fmtPrice, fmtPct,
     short, timeAgo, dexColor, avatarGrad
 } from '../utils/api';
 import CandlestickChart from './CandlestickChart';
 import './PoolDetail.css';
+
+const SOCKET_URL = process.env.REACT_APP_WS_URL || 'http://localhost:3000';
 
 export default function PoolDetail({ pool, onClose }) {
     const [detail, setDetail] = useState(null);
@@ -33,27 +36,23 @@ export default function PoolDetail({ pool, onClose }) {
             if (!cancelled) setLoading(false);
         });
 
-        return function () { cancelled = true; };
-    }, [addr]);
+        // ── Real-Time WebSocket for Trades ──
+        const socket = io(SOCKET_URL);
+        socket.emit('subscribe', addr);
 
-    useEffect(function () {
-        if (!addr) return;
-        let cancelled = false;
+        socket.on('new_swap', (s) => {
+            if (cancelled) return;
+            if (seen.current.has(s.signature)) return;
+            
+            seen.current.add(s.signature);
+            setTxs(prev => [s, ...prev].slice(0, 500));
+        });
 
-        const t = setInterval(function () {
-            fetchPoolTxns(addr, 30, 0).then(function (res) {
-                if (cancelled) return;
-                const fresh = (res.transactions || []).filter(function (r) {
-                    return !seen.current.has(r.signature);
-                });
-                if (fresh.length > 0) {
-                    fresh.forEach(function (r) { seen.current.add(r.signature); });
-                    setTxs(function (prev) { return fresh.concat(prev).slice(0, 500); });
-                }
-            }).catch(function () { });
-        }, 5000);
-
-        return function () { cancelled = true; clearInterval(t); };
+        return function () { 
+            cancelled = true; 
+            socket.emit('unsubscribe', addr);
+            socket.disconnect();
+        };
     }, [addr]);
 
     if (loading) {

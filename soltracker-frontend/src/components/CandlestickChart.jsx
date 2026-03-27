@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart } from 'lightweight-charts';
+import { io } from 'socket.io-client';
 import './CandlestickChart.css';
+
+const SOCKET_URL = process.env.REACT_APP_WS_URL || 'http://localhost:3000';
 
 export default function CandlestickChart({ poolAddress }) {
     const chartContainerRef = useRef();
@@ -108,31 +111,27 @@ export default function CandlestickChart({ poolAddress }) {
 
         loadInitialData();
 
-        const pollInterval = setInterval(async () => {
-            try {
-                const res = await fetch(`http://localhost:3000/pools/${poolAddress}/candles?resolution=${tf}&limit=2`);
-                if (!res.ok) return;
-                const data = await res.json();
-                
-                if (data.candles && data.candles.length > 0 && isMounted) {
-                    data.candles.forEach(c => {
-                        const isUp = Number(c.close) >= Number(c.open);
-                        candlestickSeries.update({
-                            time: c.time,
-                            open: Number(c.open),
-                            high: Number(c.high),
-                            low: Number(c.low),
-                            close: Number(c.close)
-                        });
-                        volumeSeries.update({
-                            time: c.time,
-                            value: Number(c.volume),
-                            color: isUp ? 'rgba(0, 208, 148, 0.4)' : 'rgba(255, 61, 113, 0.4)'
-                        });
-                    });
-                }
-            } catch (err) {}
-        }, 5000);
+        // 2. Real-Time WebSocket Logic
+        const socket = io(SOCKET_URL);
+        socket.emit('subscribe', poolAddress);
+
+        socket.on('candle_update', (c) => {
+            if (!isMounted || c.resolution !== tf) return;
+            
+            const isUp = Number(c.close) >= Number(c.open);
+            candlestickSeries.update({
+                time: c.time,
+                open: Number(c.open),
+                high: Number(c.high),
+                low: Number(c.low),
+                close: Number(c.close)
+            });
+            volumeSeries.update({
+                time: c.time,
+                value: Number(c.volume),
+                color: isUp ? 'rgba(0, 208, 148, 0.4)' : 'rgba(255, 61, 113, 0.4)'
+            });
+        });
 
         const resizeObserver = new ResizeObserver(entries => {
             if (entries.length === 0 || entries[0].target !== chartContainerRef.current) return;
@@ -143,7 +142,8 @@ export default function CandlestickChart({ poolAddress }) {
 
         return () => {
             isMounted = false;
-            clearInterval(pollInterval);
+            socket.emit('unsubscribe', poolAddress);
+            socket.disconnect();
             resizeObserver.disconnect();
             chart.remove();
         };

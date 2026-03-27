@@ -15,20 +15,18 @@ const RESOLUTIONS = ['1m', '5m', '15m', '30m', '1h', '4h', '24h'];
  * uses UPSERT logic to handle real-time high/low tracking.
  */
 async function processSwapForCandles(swap) {
-    if (!swap || !swap.poolAddress || !swap.price || !swap.blockTime) return;
+    if (!swap || !swap.poolAddress || !swap.price || !swap.blockTime) return [];
 
     const blockTime = new Date(swap.blockTime);
     const price = swap.price;
     const volumeUsd = swap.usdValue || 0;
+    const updated = [];
 
     for (const res of RESOLUTIONS) {
         try {
             const timeBucket = getBucket(blockTime, res);
 
-            // Perform UPSERT on pool_candles
-            // If the candle exists for (pool, res, bucket), update High/Low/Close/Volume
-            // If it doesn't exist, create it.
-            await db.query(
+            const result = await db.query(
                 `INSERT INTO pool_candles (
                     pool_address, resolution, time_bucket, 
                     open_price, high_price, low_price, close_price, 
@@ -42,13 +40,28 @@ async function processSwapForCandles(swap) {
                     close_price = EXCLUDED.close_price,
                     volume_usd = pool_candles.volume_usd + EXCLUDED.volume_usd,
                     tx_count = pool_candles.tx_count + 1,
-                    updated_at = CURRENT_TIMESTAMP`,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING *`,
                 [swap.poolAddress, res, timeBucket, price, volumeUsd]
             );
+
+            const r = result.rows[0];
+            if (r) {
+                updated.push({
+                    resolution: res,
+                    time: Math.floor(new Date(r.time_bucket).getTime() / 1000),
+                    open: Number(r.open_price),
+                    high: Number(r.high_price),
+                    low: Number(r.low_price),
+                    close: Number(r.close_price),
+                    volume: Number(r.volume_usd)
+                });
+            }
         } catch (err) {
             console.error(`[OHLCV] Failed to update ${res} candle for ${swap.poolAddress}:`, err.message);
         }
     }
+    return updated;
 }
 
 /**

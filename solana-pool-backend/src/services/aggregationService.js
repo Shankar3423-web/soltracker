@@ -46,13 +46,31 @@ async function aggregateAllPools() {
       agg AS (
         SELECT
           pool_address,
-          SUM(usd_value)                                        AS volume_24h,
-          SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '6 hours'  THEN usd_value ELSE 0 END) AS volume_6h,
-          SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour'   THEN usd_value ELSE 0 END) AS volume_1h,
+          -- Volumes
+          SUM(usd_value) AS volume_24h,
+          SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '6 hours'   THEN usd_value ELSE 0 END) AS volume_6h,
+          SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour'    THEN usd_value ELSE 0 END) AS volume_1h,
+          SUM(CASE WHEN block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '5 minutes' THEN usd_value ELSE 0 END) AS volume_5m,
+          
+          -- Counts
           COUNT(*)                                              AS tx_count_24h,
+          COUNT(*) FILTER (WHERE block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '6 hours')   AS tx_count_6h,
+          COUNT(*) FILTER (WHERE block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour')    AS tx_count_1h,
+          COUNT(*) FILTER (WHERE block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '5 minutes') AS tx_count_5m,
+
+          -- Buys/Sells
           SUM(CASE WHEN side = 'buy'  THEN 1 ELSE 0 END)       AS buys_24h,
           SUM(CASE WHEN side = 'sell' THEN 1 ELSE 0 END)       AS sells_24h,
-          COUNT(DISTINCT wallet)                                AS makers_24h
+          SUM(CASE WHEN side = 'buy' AND block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour' THEN 1 ELSE 0 END) AS buys_1h,
+          SUM(CASE WHEN side = 'sell' AND block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour' THEN 1 ELSE 0 END) AS sells_1h,
+          
+          -- Makers
+          COUNT(DISTINCT wallet)                                AS makers_24h,
+          COUNT(DISTINCT wallet) FILTER (WHERE block_time > (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 hour')    AS makers_1h,
+          
+          -- Buyers/Sellers (simplified for global agg)
+          COUNT(DISTINCT CASE WHEN side = 'buy' THEN wallet END) AS buyers_24h,
+          COUNT(DISTINCT CASE WHEN side = 'sell' THEN wallet END) AS sellers_24h
         FROM recent
         GROUP BY pool_address
       ),
@@ -65,50 +83,52 @@ async function aggregateAllPools() {
         WHERE price IS NOT NULL
         ORDER BY pool_address, block_time DESC
       ),
-      price_24h_ago AS (
+      price_prev AS (
         SELECT DISTINCT ON (pool_address)
           pool_address,
-          price AS old_price
-        FROM swaps
-        WHERE price IS NOT NULL
-          AND block_time BETWEEN (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '25 hours'
-                             AND (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '23 hours'
-        ORDER BY pool_address, block_time DESC
+          (SELECT price FROM swaps s2 WHERE s2.pool_address = s.pool_address AND s2.price IS NOT NULL AND s2.block_time <= NOW() - INTERVAL '5 minutes' ORDER BY s2.block_time DESC LIMIT 1) as p_5m,
+          (SELECT price FROM swaps s2 WHERE s2.pool_address = s.pool_address AND s2.price IS NOT NULL AND s2.block_time <= NOW() - INTERVAL '1 hour' ORDER BY s2.block_time DESC LIMIT 1) as p_1h,
+          (SELECT price FROM swaps s2 WHERE s2.pool_address = s.pool_address AND s2.price IS NOT NULL AND s2.block_time <= NOW() - INTERVAL '6 hours' ORDER BY s2.block_time DESC LIMIT 1) as p_6h,
+          (SELECT price FROM swaps s2 WHERE s2.pool_address = s.pool_address AND s2.price IS NOT NULL AND s2.block_time <= NOW() - INTERVAL '24 hours' ORDER BY s2.block_time DESC LIMIT 1) as p_24h
+        FROM (SELECT DISTINCT pool_address FROM recent) s
       )
       SELECT
-        agg.pool_address,
-        agg.volume_24h,
-        agg.volume_6h,
-        agg.volume_1h,
-        agg.tx_count_24h,
-        agg.buys_24h,
-        agg.sells_24h,
-        agg.makers_24h,
+        agg.*,
         lp.current_price,
-        CASE
-          WHEN p24.old_price IS NOT NULL AND p24.old_price > 0
-          THEN ROUND(((lp.current_price - p24.old_price) / p24.old_price * 100)::NUMERIC, 2)
-          ELSE NULL
-        END AS price_change_24h
+        pp.p_5m, pp.p_1h, pp.p_6h, pp.p_24h
       FROM agg
-      LEFT JOIN latest_price  lp  ON lp.pool_address  = agg.pool_address
-      LEFT JOIN price_24h_ago p24 ON p24.pool_address = agg.pool_address
+      LEFT JOIN latest_price lp ON lp.pool_address = agg.pool_address
+      LEFT JOIN price_prev pp ON pp.pool_address = agg.pool_address
     `);
 
         let updated = 0;
         for (const row of result.rows) {
+            const cur = row.current_price;
+            const calc = (old) => (cur && old && old > 0) ? Number(((cur - old) / old * 100).toFixed(2)) : null;
+
             await upsertPoolStats({
                 poolAddress: row.pool_address,
-                price: row.current_price,
-                priceChange24h: row.price_change_24h != null ? Number(row.price_change_24h) : null,
-                volume24h: Number(row.volume_24h ?? 0),
-                volume6h: Number(row.volume_6h ?? 0),
+                price: cur,
+                priceChange5m: calc(row.p_5m),
+                priceChange1h: calc(row.p_1h),
+                priceChange6h: calc(row.p_6h),
+                priceChange24h: calc(row.p_24h),
+                volume5m: Number(row.volume_5m ?? 0),
                 volume1h: Number(row.volume_1h ?? 0),
-                liquidity: null,   // filled in separately by liquidityService
+                volume6h: Number(row.volume_6h ?? 0),
+                volume24h: Number(row.volume_24h ?? 0),
+                txCount5m: Number(row.tx_count_5m ?? 0),
+                txCount1h: Number(row.tx_count_1h ?? 0),
+                txCount6h: Number(row.tx_count_6h ?? 0),
                 txCount24h: Number(row.tx_count_24h ?? 0),
+                buys1h: Number(row.buys_1h ?? 0),
                 buys24h: Number(row.buys_24h ?? 0),
+                sells1h: Number(row.sells_1h ?? 0),
                 sells24h: Number(row.sells_24h ?? 0),
+                makers1h: Number(row.makers_1h ?? 0),
                 makers24h: Number(row.makers_24h ?? 0),
+                buyers24h: Number(row.buyers_24h ?? 0),
+                sellers24h: Number(row.sellers_24h ?? 0),
             });
             updated++;
         }
@@ -157,18 +177,59 @@ async function aggregatePool(poolAddress) {
       ),
       metrics AS (
         SELECT
+           -- Volumes
            COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '5 minutes' THEN usd_value ELSE 0 END), 0) AS volume_5m,
            COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '1 hour'    THEN usd_value ELSE 0 END), 0) AS volume_1h,
            COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '6 hours'   THEN usd_value ELSE 0 END), 0) AS volume_6h,
            COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours'  THEN usd_value ELSE 0 END), 0) AS volume_24h,
-           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'buy'  THEN usd_value ELSE 0 END), 0) AS buy_volume_24h,
-           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'sell' THEN usd_value ELSE 0 END), 0) AS sell_volume_24h,
-           COUNT(*) FILTER (WHERE block_time > NOW() - INTERVAL '24 hours') AS tx_count_24h,
-           SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'buy'  THEN 1 ELSE 0 END) AS buys_24h,
-           SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'sell' THEN 1 ELSE 0 END) AS sells_24h,
-           COUNT(DISTINCT wallet) FILTER (WHERE block_time > NOW() - INTERVAL '24 hours') AS makers_24h,
-           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'buy'  THEN wallet END) AS buyers_24h,
-           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '24 hours' AND side = 'sell' THEN wallet END) AS sellers_24h
+           
+           -- Buy Volumes
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '5 minutes' AND side = 'buy' THEN usd_value ELSE 0 END), 0) AS buy_volume_5m,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '1 hour'    AND side = 'buy' THEN usd_value ELSE 0 END), 0) AS buy_volume_1h,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '6 hours'   AND side = 'buy' THEN usd_value ELSE 0 END), 0) AS buy_volume_6h,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours'  AND side = 'buy' THEN usd_value ELSE 0 END), 0) AS buy_volume_24h,
+           
+           -- Sell Volumes
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '5 minutes' AND side = 'sell' THEN usd_value ELSE 0 END), 0) AS sell_volume_5m,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '1 hour'    AND side = 'sell' THEN usd_value ELSE 0 END), 0) AS sell_volume_1h,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '6 hours'   AND side = 'sell' THEN usd_value ELSE 0 END), 0) AS sell_volume_6h,
+           COALESCE(SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours'  AND side = 'sell' THEN usd_value ELSE 0 END), 0) AS sell_volume_24h,
+
+           -- TX Counts
+           COUNT(*) FILTER (WHERE block_time > NOW() - INTERVAL '5 minutes') AS tx_count_5m,
+           COUNT(*) FILTER (WHERE block_time > NOW() - INTERVAL '1 hour')    AS tx_count_1h,
+           COUNT(*) FILTER (WHERE block_time > NOW() - INTERVAL '6 hours')   AS tx_count_6h,
+           COUNT(*) FILTER (WHERE block_time > NOW() - INTERVAL '24 hours')  AS tx_count_24h,
+
+           -- Buys
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '5 minutes' AND side = 'buy' THEN 1 ELSE 0 END) AS buys_5m,
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '1 hour'    AND side = 'buy' THEN 1 ELSE 0 END) AS buys_1h,
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '6 hours'   AND side = 'buy' THEN 1 ELSE 0 END) AS buys_6h,
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours'  AND side = 'buy' THEN 1 ELSE 0 END) AS buys_24h,
+           
+           -- Sells
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '5 minutes' AND side = 'sell' THEN 1 ELSE 0 END) AS sells_5m,
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '1 hour'    AND side = 'sell' THEN 1 ELSE 0 END) AS sells_1h,
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '6 hours'   AND side = 'sell' THEN 1 ELSE 0 END) AS sells_6h,
+           SUM(CASE WHEN block_time > NOW() - INTERVAL '24 hours'  AND side = 'sell' THEN 1 ELSE 0 END) AS sells_24h,
+
+           -- Makers
+           COUNT(DISTINCT wallet) FILTER (WHERE block_time > NOW() - INTERVAL '5 minutes') AS makers_5m,
+           COUNT(DISTINCT wallet) FILTER (WHERE block_time > NOW() - INTERVAL '1 hour')    AS makers_1h,
+           COUNT(DISTINCT wallet) FILTER (WHERE block_time > NOW() - INTERVAL '6 hours')   AS makers_6h,
+           COUNT(DISTINCT wallet) FILTER (WHERE block_time > NOW() - INTERVAL '24 hours')  AS makers_24h,
+
+           -- Buyers
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '5 minutes' AND side = 'buy' THEN wallet END) AS buyers_5m,
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '1 hour'    AND side = 'buy' THEN wallet END) AS buyers_1h,
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '6 hours'   AND side = 'buy' THEN wallet END) AS buyers_6h,
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '24 hours'  AND side = 'buy' THEN wallet END) AS buyers_24h,
+
+           -- Sellers
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '5 minutes' AND side = 'sell' THEN wallet END) AS sellers_5m,
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '1 hour'    AND side = 'sell' THEN wallet END) AS sellers_1h,
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '6 hours'   AND side = 'sell' THEN wallet END) AS sellers_6h,
+           COUNT(DISTINCT CASE WHEN block_time > NOW() - INTERVAL '24 hours'  AND side = 'sell' THEN wallet END) AS sellers_24h
         FROM windows
       ),
       prices AS (
@@ -227,14 +288,38 @@ async function aggregatePool(poolAddress) {
             volume1h: Number(stats.volume_1h || 0),
             volume6h: Number(stats.volume_6h || 0),
             volume24h: Number(stats.volume_24h || 0),
-            buyVolume24h: Number(stats.buy_volume_24h || 0),
-            sellVolume24h: Number(stats.sell_volume_24h || 0),
-            buyers24h: Number(stats.buyers_24h || 0),
-            sellers24h: Number(stats.sellers_24h || 0),
+            txCount5m: Number(stats.tx_count_5m || 0),
+            txCount1h: Number(stats.tx_count_1h || 0),
+            txCount6h: Number(stats.tx_count_6h || 0),
             txCount24h: Number(stats.tx_count_24h || 0),
+            buys5m: Number(stats.buys_5m || 0),
+            buys1h: Number(stats.buys_1h || 0),
+            buys6h: Number(stats.buys_6h || 0),
             buys24h: Number(stats.buys_24h || 0),
+            sells5m: Number(stats.sells_5m || 0),
+            sells1h: Number(stats.sells_1h || 0),
+            sells6h: Number(stats.sells_6h || 0),
             sells24h: Number(stats.sells_24h || 0),
+            buyVolume5m: Number(stats.buy_volume_5m || 0),
+            buyVolume1h: Number(stats.buy_volume_1h || 0),
+            buyVolume6h: Number(stats.buy_volume_6h || 0),
+            buyVolume24h: Number(stats.buy_volume_24h || 0),
+            sellVolume5m: Number(stats.sell_volume_5m || 0),
+            sellVolume1h: Number(stats.sell_volume_1h || 0),
+            sellVolume6h: Number(stats.sell_volume_6h || 0),
+            sellVolume24h: Number(stats.sell_volume_24h || 0),
+            makers5m: Number(stats.makers_5m || 0),
+            makers1h: Number(stats.makers_1h || 0),
+            makers6h: Number(stats.makers_6h || 0),
             makers24h: Number(stats.makers_24h || 0),
+            buyers5m: Number(stats.buyers_5m || 0),
+            buyers1h: Number(stats.buyers_1h || 0),
+            buyers6h: Number(stats.buyers_6h || 0),
+            buyers24h: Number(stats.buyers_24h || 0),
+            sellers5m: Number(stats.sellers_5m || 0),
+            sellers1h: Number(stats.sellers_1h || 0),
+            sellers6h: Number(stats.sellers_6h || 0),
+            sellers24h: Number(stats.sellers_24h || 0),
             fdv,
             marketCap
         });

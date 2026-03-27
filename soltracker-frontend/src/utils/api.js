@@ -13,9 +13,8 @@ export function fetchPoolTxns(addr, limit, offset) { return get('/pools/' + addr
 
 export const DEXES = [
     { label: 'All DEXes', key: null, color: '#e8eaf0' },
-    { label: 'PumpSwap', key: 'Pump.fun AMM', color: '#00c896' },
-    { label: 'Meteora', key: 'Meteora DAMM v2', color: '#ff6b35' },
-    { label: 'Raydium', key: 'Raydium AMM', color: '#5ac8fa' }
+    { label: 'Pump.fun', key: 'Pump.fun', color: '#00c896' },
+    { label: 'Pump AMM', key: 'Pump.fun AMM', color: '#00c896' }
 ];
 
 export const DEX_KEYS = DEXES.filter(d => d.key !== null).map(d => d.key);

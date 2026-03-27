@@ -1,0 +1,87 @@
+DB Schema Analysis
+==================
+
+--- TABLE: dexes ---
+id: integer
+name: character varying
+created_at: timestamp without time zone
+
+--- TABLE: pool_stats ---
+pool_address: character varying
+price: double precision
+price_change_24h: double precision
+volume_24h: double precision
+volume_6h: double precision
+volume_1h: double precision
+liquidity: double precision
+tx_count_24h: integer
+buys_24h: integer
+sells_24h: integer
+makers_24h: integer
+updated_at: timestamp without time zone
+price_change_5m: numeric
+price_change_1h: numeric
+price_change_6h: numeric
+volume_5m: numeric
+buyers_24h: integer
+sellers_24h: integer
+buy_volume_24h: numeric
+sell_volume_24h: numeric
+fdv: numeric
+market_cap: numeric
+
+--- TABLE: tokens ---
+mint: text
+symbol: character varying
+name: character varying
+decimals: smallint
+logo_url: text
+created_at: timestamp without time zone
+
+--- TABLE: pools ---
+id: integer
+pool_address: character varying
+dex_id: integer
+base_token_mint: character varying
+quote_token_mint: character varying
+base_symbol: character varying
+quote_symbol: character varying
+created_at: timestamp without time zone
+
+--- TABLE: swaps ---
+id: integer
+signature: character varying
+pool_address: character varying
+dex_id: integer
+wallet: character varying
+base_amount: numeric
+quote_amount: numeric
+price: numeric
+usd_value: numeric
+swap_side: character varying
+classification: character varying
+slot: bigint
+block_time: timestamp without time zone
+created_at: timestamp without time zone
+
+--- TABLE: users ---
+id: integer
+firebase_uid: text
+email: text
+name: text
+picture: text
+created_at: timestamp without time zone
+wallet_address: text
+
+--- TABLE: pool_candles ---
+pool_address: text
+resolution: character varying
+time_bucket: timestamp without time zone
+open_price: numeric
+high_price: numeric
+low_price: numeric
+close_price: numeric
+volume_usd: numeric
+tx_count: integer
+updated_at: timestamp without time zone
+
