@@ -35,7 +35,10 @@ async function getJupiterList() {
     if (_jupiterFetched) return _jupiterList ?? new Map();
     _jupiterFetched = true;
     try {
-        const res = await axios.get('https://token.jup.ag/all', { timeout: 10000 });
+        const res = await axios.get('https://token.jup.ag/all', {
+            timeout: 10000,
+            proxy: false,
+        });
         const list = res.data;
         if (!Array.isArray(list)) return new Map();
         _jupiterList = new Map(list.map(t => [t.address, t]));
@@ -64,7 +67,10 @@ async function fetchFromHelius(mint) {
             id: 'meta',
             method: 'getAsset',
             params: { id: mint },
-        }, { timeout: 8000 });
+        }, {
+            timeout: 8000,
+            proxy: false,
+        });
 
         const asset = res.data?.result;
         if (!asset) return null;
@@ -190,7 +196,10 @@ async function getTokenSupply(mint) {
             id: 'supply',
             method: 'getTokenSupply',
             params: [mint],
-        }, { timeout: 8000 });
+        }, {
+            timeout: 8000,
+            proxy: false,
+        });
         const amount = res.data?.result?.value?.uiAmount;
         if (typeof amount === 'number') return amount;
         // Fallback for Pump.fun tokens: 1B supply is standard

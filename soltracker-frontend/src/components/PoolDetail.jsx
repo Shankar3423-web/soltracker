@@ -1,407 +1,504 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import CandlestickChart from './CandlestickChart';
 import {
-    fetchPoolDetail, 
-    fmtUsd, fmtNum, fmtPrice, fmtPct,
-    short, timeAgo, dexColor, avatarGrad
+    SOCKET_URL,
+    avatarGrad,
+    dexColor,
+    fetchPoolDetail,
+    fmtNativePrice,
+    fmtNum,
+    fmtPct,
+    fmtPrice,
+    fmtUsd,
+    makeSwapKey,
+    normalizeTransaction,
+    short,
+    timeAgo,
 } from '../utils/api';
 import './PoolDetail.css';
 
-const SOCKET_URL = process.env.REACT_APP_WS_URL || 'http://localhost:3000';
+const WINDOWS = [
+    { key: 'm5', label: '5M' },
+    { key: 'h1', label: '1H' },
+    { key: 'h6', label: '6H' },
+    { key: 'h24', label: '24H' },
+];
 
 export default function PoolDetail({ pool, onClose }) {
+    const addr = pool?.poolAddress;
     const [detail, setDetail] = useState(null);
     const [txs, setTxs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('all');
-    const seen = useRef(new Set());
-    const addr = pool && pool.poolAddress;
+    const [activeWindow, setActiveWindow] = useState('h24');
+    const [error, setError] = useState('');
+    const seenRef = useRef(new Set());
 
-    useEffect(function () {
-        if (!addr) return;
+    useEffect(() => {
+        if (!addr) return undefined;
+
         let cancelled = false;
-        seen.current = new Set();
-        setTxs([]);
+        seenRef.current = new Set();
         setLoading(true);
+        setDetail(null);
+        setTxs([]);
+        setFilter('all');
+        setActiveWindow('h24');
 
-        fetchPoolDetail(addr).then(function (d) {
-            if (cancelled) return;
-            setDetail(d);
-            const items = (d && d.transactions && d.transactions.items) || [];
-            items.forEach(function (t) { seen.current.add(t.signature); });
-            setTxs(items);
-            setLoading(false);
-        }).catch(function () {
-            if (!cancelled) setLoading(false);
+        async function load(showLoader) {
+            if (showLoader) {
+                setLoading(true);
+            }
+
+            try {
+                const nextDetail = await fetchPoolDetail(addr, 200, 0);
+                if (cancelled) return;
+
+                const items = nextDetail?.transactions?.items ?? [];
+                seenRef.current = new Set(items.map(makeSwapKey));
+                setDetail(nextDetail);
+                setTxs(items);
+                setError('');
+            } catch (err) {
+                if (!cancelled) {
+                    setError('Unable to load this pool right now.');
+                }
+            } finally {
+                if (!cancelled) {
+                    setLoading(false);
+                }
+            }
+        }
+
+        load(true);
+        const refreshTimer = setInterval(() => load(false), 15000);
+
+        const socket = io(SOCKET_URL, {
+            transports: ['websocket', 'polling'],
         });
 
-        // ── Real-Time WebSocket for Trades ──
-        const socket = io(SOCKET_URL);
         socket.emit('subscribe', addr);
 
-        socket.on('new_swap', (s) => {
+        socket.on('new_swap', (incoming) => {
             if (cancelled) return;
-            if (seen.current.has(s.signature)) return;
-            
-            seen.current.add(s.signature);
-            setTxs(prev => [s, ...prev].slice(0, 500));
+
+            const tx = normalizeTransaction(incoming);
+            const key = makeSwapKey(tx);
+            if (seenRef.current.has(key)) return;
+
+            seenRef.current.add(key);
+            setTxs((current) => [tx, ...current].slice(0, 250));
+            setDetail((current) => {
+                if (!current?.stats) return current;
+                const nextStats = {
+                    ...current.stats,
+                    price: tx.priceUsd ?? current.stats.price,
+                    priceUsd: tx.priceUsd ?? current.stats.priceUsd,
+                    priceNative: tx.priceNative ?? current.stats.priceNative,
+                    priceSol: tx.priceSol ?? current.stats.priceSol,
+                    updatedAt: tx.blockTime ?? current.stats.updatedAt,
+                };
+
+                return {
+                    ...current,
+                    stats: nextStats,
+                    pool: {
+                        ...current.pool,
+                        stats: nextStats,
+                    },
+                };
+            });
         });
 
-        return function () { 
-            cancelled = true; 
+        return () => {
+            cancelled = true;
+            clearInterval(refreshTimer);
             socket.emit('unsubscribe', addr);
             socket.disconnect();
         };
     }, [addr]);
+
+    const currentPool = detail?.pool ?? pool ?? {};
+    const stats = detail?.stats ?? currentPool.stats ?? null;
+    const headerGradient = avatarGrad(currentPool.poolAddress);
+    const dexTint = dexColor(currentPool.dexName);
+    const quoteSymbol = currentPool.quoteSymbol || 'SOL';
+    const baseSymbol = currentPool.baseSymbol || short(currentPool.baseMint || currentPool.poolAddress, 4);
+
+    const filteredTxs = useMemo(() => {
+        return txs.filter((tx) => {
+            if (filter === 'buy') return tx.swapSide === 'buy';
+            if (filter === 'sell') return tx.swapSide === 'sell';
+            return true;
+        });
+    }, [filter, txs]);
+
+    const windowStats = useMemo(() => getWindowStats(stats, activeWindow), [stats, activeWindow]);
+    const buyTxnPct = ratio(windowStats.buys, windowStats.total);
+    const buyVolPct = ratio(windowStats.buyVolume, windowStats.volume);
+    const buyerPct = ratio(windowStats.buyers, windowStats.buyers + windowStats.sellers);
 
     if (loading) {
         return (
             <div className="pd">
                 <div className="pd-loading">
                     <div className="spinner" />
-                    <span>Loading pool...</span>
+                    <span>Loading live pool data...</span>
                 </div>
             </div>
         );
     }
 
-    const p = (detail && detail.pool) || pool || {};
-    const stats = (detail && detail.stats) || null;
-    const dc = dexColor(p.dexName);
-    const bg = avatarGrad(p.poolAddress);
-
-    const shown = txs.filter(function (tx) {
-        if (filter === 'buy') return tx.swapSide === 'buy';
-        if (filter === 'sell') return tx.swapSide === 'sell';
-        return true;
-    });
-
-    const tbuys = stats ? Number(stats.buys24h || 0) : 0;
-    const tsells = stats ? Number(stats.sells24h || 0) : 0;
-    const ttl = tbuys + tsells || 1;
-    const buyTxPct = (tbuys / ttl) * 100;
-
-    const buyVol = stats ? Number(stats.buyVolume24h || 0) : 0;
-    const sellVol = stats ? Number(stats.sellVolume24h || 0) : 0;
-    const totalVol = buyVol + sellVol || 1;
-    const buyVolPct = (buyVol / totalVol) * 100;
-
-    const buyers = stats ? Number(stats.buyers24h || 0) : 0;
-    const sellers = stats ? Number(stats.sellers24h || 0) : 0;
-    const totalMakers = buyers + sellers || 1;
-    const buyerPct = (buyers / totalMakers) * 100;
-
-    const halfLiq = stats && stats.liquidity ? stats.liquidity / 2 : 0;
-    const solPrice = 150; // Approximated SOL price for UI
-    const pooledBase = stats && stats.price ? (halfLiq / stats.price) : 0;
-    const pooledQuote = halfLiq / solPrice;
+    if (error && !stats) {
+        return (
+            <div className="pd">
+                <div className="pd-empty">
+                    <h2>Pool data unavailable</h2>
+                    <p>{error}</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
-        <div className="pd-wrapper">
-            {/* ── LEFT MAIN: Transactions ── */}
+        <div className="pd">
             <div className="pd-main">
-                <div className="pd-main-top">
-                    <button className="pd-back" onClick={onClose}>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                            <line x1="19" y1="12" x2="5" y2="12" />
-                            <polyline points="12 19 5 12 12 5" />
-                        </svg>
-                        Back
+                <header className="pd-header">
+                    <button className="pd-back" onClick={onClose} type="button">
+                        <BackIcon />
+                        <span>Back</span>
                     </button>
-                    <div className="pd-main-pair">
-                        <PoolLogo p={p} bg={bg} />
-                        <span className="pd-m-base">{p.baseSymbol || '???'}</span>
-                        <span className="pd-m-sep">/</span>
-                        <span className="pd-m-quote">{p.quoteSymbol || 'SOL'}</span>
-                        <span className="pd-m-price">{fmtPrice(stats && stats.price)}</span>
-                        {stats && stats.priceChange24h != null && (
-                            <span className={'pd-m-pct ' + (stats.priceChange24h >= 0 ? 'up' : 'down')}>
-                                {fmtPct(stats.priceChange24h)}
-                            </span>
-                        )}
-                    </div>
-                </div>
 
-
-                <div className="pd-txs">
-                    <div className="pd-tx-head">
-                        <span className="pd-tx-title">TRANSACTIONS</span>
-                        <div className="pd-tx-filters">
-                            {['all', 'buy', 'sell'].map(function (f) {
-                                return (
-                                    <button
-                                        key={f}
-                                        className={'pd-filter-btn' + (filter === f ? ' active' + (f !== 'all' ? ' ' + f : '') : '')}
-                                        onClick={function () { setFilter(f); }}
-                                    >
-                                        {f.toUpperCase()}
-                                    </button>
-                                );
-                            })}
+                    <div className="pd-header-pair">
+                        <PairAvatar pool={currentPool} background={headerGradient} />
+                        <div className="pd-header-copy">
+                            <div className="pd-pair-row">
+                                <h1>{baseSymbol}</h1>
+                                <span>/</span>
+                                <strong>{quoteSymbol}</strong>
+                                <em
+                                    className="pd-dex-chip"
+                                    style={{
+                                        color: dexTint,
+                                        background: `${dexTint}16`,
+                                        borderColor: `${dexTint}36`,
+                                    }}
+                                >
+                                    {currentPool.dexName || 'Unknown DEX'}
+                                </em>
+                            </div>
+                            <div className="pd-meta-row">
+                                <span>Solana</span>
+                                <span className="pd-meta-dot" />
+                                <span>{short(currentPool.poolAddress, 5)}</span>
+                                <span className="pd-meta-dot" />
+                                <span>
+                                    Updated {stats?.updatedAt ? timeAgo(stats.updatedAt) : 'recently'}
+                                </span>
+                            </div>
                         </div>
-                        <span className="pd-tx-cnt">{shown.length}</span>
                     </div>
 
-                    <div className="pd-tx-scroll">
-                        <table className="pd-tx-table">
+                    <div className="pd-header-price">
+                        <div className="pd-price-main">{fmtPrice(stats?.priceUsd)}</div>
+                        <div className="pd-price-sub">
+                            {fmtNativePrice(stats?.priceNative, quoteSymbol)}
+                        </div>
+                    </div>
+                </header>
+
+                <section className="pd-chart-panel">
+                    <CandlestickChart
+                        poolAddress={currentPool.poolAddress}
+                        baseSymbol={baseSymbol}
+                        quoteSymbol={quoteSymbol}
+                    />
+                </section>
+
+                <section className="pd-table-panel">
+                    <div className="pd-table-toolbar">
+                        <div className="pd-table-title">
+                            <span>Transactions</span>
+                            <strong>{fmtNum(filteredTxs.length, 0)}</strong>
+                        </div>
+
+                        <div className="pd-filters">
+                            {['all', 'buy', 'sell'].map((value) => (
+                                <button
+                                    key={value}
+                                    type="button"
+                                    className={`pd-filter-btn${filter === value ? ` active ${value}` : ''}`}
+                                    onClick={() => setFilter(value)}
+                                >
+                                    {value.toUpperCase()}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="pd-table-scroll">
+                        <table className="pd-table">
                             <thead>
                                 <tr>
-                                    <th>DATE</th>
-                                    <th>TYPE</th>
+                                    <th>Date</th>
+                                    <th>Type</th>
                                     <th className="r">USD</th>
-                                    <th className="r">{p.baseSymbol || 'BASE'}</th>
-                                    <th className="r">SOL</th>
-                                    <th className="r">PRICE</th>
-                                    <th>MAKER</th>
-                                    <th>TXN</th>
+                                    <th className="r">{baseSymbol}</th>
+                                    <th className="r">{quoteSymbol}</th>
+                                    <th className="r">Price</th>
+                                    <th>Maker</th>
+                                    <th>Txn</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {shown.length === 0
-                                    ? <tr><td colSpan="8" className="tx-empty">No transactions yet.</td></tr>
-                                    : shown.map(function (tx, i) {
-                                        return <TxRow key={tx.signature + '-' + i} tx={tx} pool={p} />;
-                                    })
-                                }
+                                {filteredTxs.length === 0 ? (
+                                    <tr>
+                                        <td className="tx-empty" colSpan="8">
+                                            No transactions available for this filter yet.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    filteredTxs.map((tx) => (
+                                        <TxRow
+                                            key={makeSwapKey(tx)}
+                                            tx={tx}
+                                            quoteSymbol={quoteSymbol}
+                                        />
+                                    ))
+                                )}
                             </tbody>
                         </table>
                     </div>
-                </div>
+                </section>
             </div>
 
-            {/* ── RIGHT SIDEBAR: Stats ── */}
-            <div className="pd-sidebar">
-                <div className="pd-sb-header">
-                    <div className="pd-sb-top-pair">
-                        <PoolLogo p={p} bg={bg} />
-                        <div style={{display: 'flex', alignItems: 'baseline', gap: '6px'}}>
-                            <span className="pd-sb-t-base">{p.baseSymbol || '???'} <span className="pd-sb-t-copy" title="Copy Address">❐</span></span>
-                            <span className="pd-sb-t-sep">/</span>
-                            <span className="pd-sb-t-quote">{p.quoteSymbol || 'SOL'}</span>
-                        </div>
-                    </div>
-                    <div className="pd-sb-breadcrumbs">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" style={{marginRight: -2}}>
-                            <circle cx="12" cy="12" r="12" fill="#9945ff" />
-                            <path d="M7 16l2.5-4L12 15l2-3L16 14" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        <span className="pd-sb-bc-sol">Solana</span> 
-                        <span className="pd-sb-bc-arr">{'>'}</span> 
-                        <span className="pd-sb-bc-dex" style={{color: dc}}>
-                            💊 {p.dexName || 'Unknown DEX'}
-                        </span> 
-                        {p.dexName === 'PumpSwap' && (
-                            <span className="pd-sb-bc-via">via 💊 Pump.fun AMM</span>
-                        )}
-                    </div>
-                </div>
-                
-                <div 
-                    className="pd-sb-banner-img" 
-                    style={{ 
-                        backgroundImage: (p.headerImage || p.baseLogo) 
-                            ? `url("${p.headerImage || p.baseLogo}"), ${bg}` 
-                            : bg 
-                    }}
-                >
-                </div>
-
-                <div className="pd-links-row">
-                    <button className="pd-l-btn" type="button"><i className="icon-web" /> Website</button>
-                    <button className="pd-l-btn" type="button"><i className="icon-tw" /> Twitter</button>
-                    <button className="pd-l-more" type="button">{'▼'}</button>
-                </div>
-
-                <div className="pd-prices-box">
-                    <div className="pd-price-col">
-                        <span className="pd-plabel">PRICE USD</span>
-                        <span className="pd-pbig">{fmtPrice(stats && stats.price)}</span>
-                    </div>
-                    <div className="pd-price-col r">
-                        <span className="pd-plabel">PRICE</span>
-                        <span className="pd-psmall">{(stats && stats.price ? stats.price.toFixed(10) : '0.00')} SOL</span>
-                    </div>
-                </div>
-
-                <div className="pd-liq-box">
-                    <div className="pd-liq-item">
-                        <span className="pd-liq-label">LIQUIDITY</span>
-                        <span className="pd-liq-val">{fmtUsd(stats && stats.liquidity, true)}</span>
-                    </div>
-                    <div className="pd-liq-item">
-                        <span className="pd-liq-label">FDV</span>
-                        <span className="pd-liq-val">{fmtUsd(stats && stats.fdv, true)}</span>
-                    </div>
-                    <div className="pd-liq-item r">
-                        <span className="pd-liq-label">MKT CAP</span>
-                        <span className="pd-liq-val">{fmtUsd(stats && stats.marketCap, true)}</span>
-                    </div>
-                </div>
-
-                <div className="pd-timeframes">
-                    <TimeBox label="24H" pct={stats && stats.priceChange24h} active />
-                </div>
-
-                <div className="pd-stats-new">
-                    <div className="pd-sn-col left">
-                        <div className="pd-sn-row">
-                            <span className="sn-lbl">TXNS</span>
-                            <span className="sn-val">{fmtNum(stats && stats.txCount24h, 0)}</span>
-                        </div>
-                        <div className="pd-sn-row">
-                            <span className="sn-lbl">VOLUME</span>
-                            <span className="sn-val">{fmtUsd(stats && stats.volume24h, true)}</span>
-                        </div>
-                        <div className="pd-sn-row">
-                            <span className="sn-lbl">MAKERS</span>
-                            <span className="sn-val">{fmtNum(stats && stats.makers24h, 0)}</span>
-                        </div>
-                    </div>
-                    
-                    <div className="pd-sn-col right">
-                        <div className="pd-sn-split-block">
-                            <div className="pd-sn-split-txt">
-                                <div className="sn-split-half">
-                                    <span className="sn-lbl">BUYS</span>
-                                    <span className="sn-val">{fmtNum(stats && stats.buys24h, 0)}</span>
-                                </div>
-                                <div className="sn-split-half r">
-                                    <span className="sn-lbl">SELLS</span>
-                                    <span className="sn-val">{fmtNum(stats && stats.sells24h, 0)}</span>
-                                </div>
+            <aside className="pd-side">
+                <div className="pd-stat-hero" style={{ backgroundImage: `${softOverlay()}, ${headerGradient}` }}>
+                    <div className="pd-stat-hero-top">
+                        <PairAvatar pool={currentPool} background={headerGradient} compact />
+                        <div>
+                            <div className="pd-side-pair">
+                                {baseSymbol} <span>/</span> {quoteSymbol}
                             </div>
-                            <div className="sn-bar"><div className="sn-bar-buy" style={{width: `${buyTxPct}%`}}/><div className="sn-bar-sell" style={{width: `${100-buyTxPct}%`}}/></div>
-                        </div>
-
-                        <div className="pd-sn-split-block">
-                            <div className="pd-sn-split-txt">
-                                <div className="sn-split-half">
-                                    <span className="sn-lbl">BUY VOL</span>
-                                    <span className="sn-val">{fmtUsd(stats && stats.buyVolume24h, true)}</span>
-                                </div>
-                                <div className="sn-split-half r">
-                                    <span className="sn-lbl">SELL VOL</span>
-                                    <span className="sn-val">{fmtUsd(stats && stats.sellVolume24h, true)}</span>
-                                </div>
-                            </div>
-                            <div className="sn-bar"><div className="sn-bar-buy" style={{width: `${buyVolPct}%`}}/><div className="sn-bar-sell" style={{width: `${100-buyVolPct}%`}}/></div>
-                        </div>
-
-                        <div className="pd-sn-split-block">
-                            <div className="pd-sn-split-txt">
-                                <div className="sn-split-half">
-                                    <span className="sn-lbl">BUYERS</span>
-                                    <span className="sn-val">{fmtNum(stats && stats.buyers24h, 0)}</span>
-                                </div>
-                                <div className="sn-split-half r">
-                                    <span className="sn-lbl">SELLERS</span>
-                                    <span className="sn-val">{fmtNum(stats && stats.sellers24h, 0)}</span>
-                                </div>
-                            </div>
-                            <div className="sn-bar"><div className="sn-bar-buy" style={{width: `${buyerPct}%`}}/><div className="sn-bar-sell" style={{width: `${100-buyerPct}%`}}/></div>
+                            <div className="pd-side-chain">Solana via {currentPool.dexName || 'Unknown DEX'}</div>
                         </div>
                     </div>
                 </div>
 
-                <div className="pd-pool-info">
-                    <div className="pi-row">
-                        <span className="pi-lbl">Pair created</span>
-                        <span className="pi-val">{p.createdAt ? timeAgo(p.createdAt) : (p.updatedAt ? timeAgo(p.updatedAt) : '—')}</span>
-                    </div>
-                    <div className="pi-row">
-                        <span className="pi-lbl">Pooled {p.baseSymbol || 'BASE'}</span>
-                        <div className="pi-val-group">
-                            <span className="pi-val">{pooledBase > 0 ? fmtNum(pooledBase, 2) : '—'}</span>
-                            <span className="pi-usd">{halfLiq > 0 ? fmtUsd(halfLiq, true) : '—'}</span>
-                        </div>
-                    </div>
-                    <div className="pi-row">
-                        <span className="pi-lbl">Pooled {p.quoteSymbol || 'SOL'}</span>
-                        <div className="pi-val-group">
-                            <span className="pi-val">{pooledQuote > 0 ? fmtNum(pooledQuote, 2) : '—'}</span>
-                            <span className="pi-usd">{halfLiq > 0 ? fmtUsd(halfLiq, true) : '—'}</span>
-                        </div>
-                    </div>
-                    <div className="pi-row">
-                        <span className="pi-lbl">Pair</span>
-                        <div className="pi-copy-group">
-                            <button className="pi-copy" onClick={() => navigator.clipboard.writeText(p.poolAddress)}>
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                                {p.poolAddress ? short(p.poolAddress, 4) : '—'}
-                            </button>
-                            <a href={p.poolAddress ? `https://solscan.io/account/${p.poolAddress}` : '#!'} target="_blank" rel="noreferrer" className="pi-exp">
-                                EXP <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                            </a>
-                        </div>
-                    </div>
-                    <div className="pi-row">
-                        <span className="pi-lbl">{p.baseSymbol || 'BASE'}</span>
-                        <div className="pi-copy-group">
-                            <button className="pi-copy" onClick={() => navigator.clipboard.writeText(p.baseMint)}>
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                                {p.baseMint ? short(p.baseMint, 4) : '—'}
-                            </button>
-                            <a href={p.baseMint ? `https://solscan.io/token/${p.baseMint}` : '#!'} target="_blank" rel="noreferrer" className="pi-exp">
-                                EXP <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                            </a>
-                        </div>
-                    </div>
-                    <div className="pi-row">
-                        <span className="pi-lbl">{p.quoteSymbol || 'SOL'}</span>
-                        <div className="pi-copy-group">
-                            <button className="pi-copy" onClick={() => navigator.clipboard.writeText(p.quoteMint)}>
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                                {p.quoteMint ? short(p.quoteMint, 4) : '—'}
-                            </button>
-                            <a href={p.quoteMint ? `https://solscan.io/token/${p.quoteMint}` : '#!'} target="_blank" rel="noreferrer" className="pi-exp">
-                                EXP <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                            </a>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                <section className="pd-stat-grid">
+                    <MetricCard label="Price USD" value={fmtPrice(stats?.priceUsd)} emphasis />
+                    <MetricCard
+                        label="Price"
+                        value={fmtNativePrice(stats?.priceNative, quoteSymbol)}
+                    />
+                    <MetricCard label="Liquidity" value={fmtUsd(stats?.liquidity?.usd, true)} />
+                    <MetricCard label="FDV" value={fmtUsd(stats?.fdv, true)} />
+                    <MetricCard label="MKT CAP" value={fmtUsd(stats?.marketCap, true)} />
+                </section>
+
+                <section className="pd-window-bar">
+                    {WINDOWS.map((item) => (
+                        <button
+                            key={item.key}
+                            type="button"
+                            className={`pd-window-btn${activeWindow === item.key ? ' active' : ''}`}
+                            onClick={() => setActiveWindow(item.key)}
+                        >
+                            <span>{item.label}</span>
+                            <strong className={(windowStatsFor(stats, item.key).priceChange ?? 0) >= 0 ? 'up' : 'down'}>
+                                {fmtPct(windowStatsFor(stats, item.key).priceChange)}
+                            </strong>
+                        </button>
+                    ))}
+                </section>
+
+                <section className="pd-side-stats">
+                    <SnapshotCard label="Txns" value={fmtNum(windowStats.total, 0)} />
+                    <SnapshotCard label="Volume" value={fmtUsd(windowStats.volume, true)} />
+                    <SnapshotCard label="Makers" value={fmtNum(windowStats.makers, 0)} />
+
+                    <SplitCard
+                        leftLabel="Buys"
+                        leftValue={fmtNum(windowStats.buys, 0)}
+                        rightLabel="Sells"
+                        rightValue={fmtNum(windowStats.sells, 0)}
+                        percent={buyTxnPct}
+                    />
+
+                    <SplitCard
+                        leftLabel="Buy Vol"
+                        leftValue={fmtUsd(windowStats.buyVolume, true)}
+                        rightLabel="Sell Vol"
+                        rightValue={fmtUsd(windowStats.sellVolume, true)}
+                        percent={buyVolPct}
+                    />
+
+                    <SplitCard
+                        leftLabel="Buyers"
+                        leftValue={fmtNum(windowStats.buyers, 0)}
+                        rightLabel="Sellers"
+                        rightValue={fmtNum(windowStats.sellers, 0)}
+                        percent={buyerPct}
+                    />
+                </section>
+
+                <section className="pd-info-card">
+                    <InfoRow
+                        label="Pair created"
+                        value={currentPool.createdAt ? timeAgo(currentPool.createdAt) : 'Not available'}
+                    />
+                    <InfoRow
+                        label={`Pooled ${baseSymbol}`}
+                        value={fmtNum(stats?.liquidity?.base, 2)}
+                        subValue={fmtUsd(stats?.liquidity?.usd != null ? stats.liquidity.usd / 2 : null, true)}
+                    />
+                    <InfoRow
+                        label={`Pooled ${quoteSymbol}`}
+                        value={fmtNum(stats?.liquidity?.quote, 2)}
+                        subValue={fmtUsd(stats?.liquidity?.usd != null ? stats.liquidity.usd / 2 : null, true)}
+                    />
+                    <AddressRow label="Pair" value={currentPool.poolAddress} href={`https://solscan.io/account/${currentPool.poolAddress}`} />
+                    <AddressRow label={baseSymbol} value={currentPool.baseMint} href={`https://solscan.io/token/${currentPool.baseMint}`} />
+                    <AddressRow label={quoteSymbol} value={currentPool.quoteMint} href={`https://solscan.io/token/${currentPool.quoteMint}`} />
+                </section>
+            </aside>
         </div>
     );
 }
 
-function TimeBox({ label, pct, active }) {
-    const isUp = pct >= 0;
+function getWindowStats(stats, key) {
+    const snapshot = windowStatsFor(stats, key);
+    return {
+        total: snapshot.txns?.total ?? 0,
+        buys: snapshot.txns?.buys ?? 0,
+        sells: snapshot.txns?.sells ?? 0,
+        volume: snapshot.volume ?? 0,
+        buyVolume: snapshot.buyVolume ?? 0,
+        sellVolume: snapshot.sellVolume ?? 0,
+        makers: snapshot.makers ?? 0,
+        buyers: snapshot.buyers ?? 0,
+        sellers: snapshot.sellers ?? 0,
+        priceChange: snapshot.priceChange ?? null,
+    };
+}
+
+function windowStatsFor(stats, key) {
+    return {
+        txns: stats?.txns?.[key] ?? { total: 0, buys: 0, sells: 0 },
+        volume: stats?.volume?.[key] ?? 0,
+        buyVolume: stats?.buyVolume?.[key] ?? 0,
+        sellVolume: stats?.sellVolume?.[key] ?? 0,
+        makers: stats?.makers?.[key] ?? 0,
+        buyers: stats?.buyers?.[key] ?? 0,
+        sellers: stats?.sellers?.[key] ?? 0,
+        priceChange: stats?.priceChange?.[key] ?? null,
+    };
+}
+
+function ratio(part, total) {
+    const safeTotal = total || 0;
+    if (!safeTotal) return 50;
+    return Math.max(0, Math.min(100, (part / safeTotal) * 100));
+}
+
+function MetricCard({ label, value, emphasis = false }) {
     return (
-        <div className={'pd-time-box' + (active ? ' active' : '')}>
-            <span className="t-lbl">{label}</span>
-            <span className={'t-val ' + (isUp ? 'up' : 'down')}>{fmtPct(pct)}</span>
+        <div className={`pd-metric-card${emphasis ? ' emphasis' : ''}`}>
+            <span>{label}</span>
+            <strong>{value}</strong>
         </div>
     );
 }
 
-function TxRow({ tx, pool }) {
+function SnapshotCard({ label, value }) {
+    return (
+        <div className="pd-snapshot-card">
+            <span>{label}</span>
+            <strong>{value}</strong>
+        </div>
+    );
+}
+
+function SplitCard({ leftLabel, leftValue, rightLabel, rightValue, percent }) {
+    return (
+        <div className="pd-split-card">
+            <div className="pd-split-copy">
+                <div>
+                    <span>{leftLabel}</span>
+                    <strong>{leftValue}</strong>
+                </div>
+                <div className="r">
+                    <span>{rightLabel}</span>
+                    <strong>{rightValue}</strong>
+                </div>
+            </div>
+            <div className="pd-split-bar">
+                <div className="buy" style={{ width: `${percent}%` }} />
+                <div className="sell" style={{ width: `${100 - percent}%` }} />
+            </div>
+        </div>
+    );
+}
+
+function InfoRow({ label, value, subValue }) {
+    return (
+        <div className="pd-info-row">
+            <span>{label}</span>
+            <div className="pd-info-value">
+                <strong>{value}</strong>
+                {subValue ? <em>{subValue}</em> : null}
+            </div>
+        </div>
+    );
+}
+
+function AddressRow({ label, value, href }) {
+    const disabled = !value;
+    return (
+        <div className="pd-info-row">
+            <span>{label}</span>
+            <div className="pd-address-actions">
+                <button
+                    type="button"
+                    className="pd-copy-btn"
+                    disabled={disabled}
+                    onClick={() => value && navigator.clipboard.writeText(value)}
+                >
+                    <CopyIcon />
+                    {value ? short(value, 5) : 'N/A'}
+                </button>
+                <a
+                    className={`pd-exp-link${disabled ? ' disabled' : ''}`}
+                    href={disabled ? '#!' : href}
+                    target="_blank"
+                    rel="noreferrer"
+                >
+                    EXP
+                    <ExternalIcon />
+                </a>
+            </div>
+        </div>
+    );
+}
+
+function TxRow({ tx, quoteSymbol }) {
     const isBuy = tx.swapSide === 'buy';
     return (
-        <tr className={'tx-r ' + (isBuy ? 'buy' : 'sell')}>
-            <td className="tx-date">{timeAgo(tx.blockTime)}</td>
+        <tr className={`tx-r ${isBuy ? 'buy' : 'sell'}`}>
+            <td>{timeAgo(tx.blockTime)}</td>
             <td>
-                <span className={'type-pill ' + (isBuy ? 'buy' : 'sell')}>
+                <span className={`type-pill ${isBuy ? 'buy' : 'sell'}`}>
                     {isBuy ? 'Buy' : 'Sell'}
                 </span>
             </td>
-            <td className="r">
-                {tx.usdValue != null
-                    ? <span className={isBuy ? 'val-g' : 'val-r'}>${Number(tx.usdValue).toFixed(2)}</span>
-                    : <span className="val-m">{'\u2014'}</span>
-                }
-            </td>
-            <td className="r">
-                <span className={isBuy ? 'val-g' : 'val-r'}>
-                    {tx.baseAmount != null ? fmtNum(tx.baseAmount, 2) : '\u2014'}
-                </span>
-            </td>
-            <td className="r val-m">
-                {tx.quoteAmount != null ? Number(tx.quoteAmount).toFixed(4) : '\u2014'}
-            </td>
-            <td className="r val-m">{fmtPrice(tx.price)}</td>
+            <td className={`r ${isBuy ? 'val-g' : 'val-r'}`}>{fmtUsd(tx.usdValue)}</td>
+            <td className={`r ${isBuy ? 'val-g' : 'val-r'}`}>{fmtNum(tx.baseAmount, 2)}</td>
+            <td className="r val-m">{fmtNum(tx.quoteAmount, 4)}</td>
+            <td className="r val-m">{fmtPrice(tx.priceUsd)}</td>
             <td>
                 <a
-                    href={'https://solscan.io/account/' + tx.wallet}
+                    href={`https://solscan.io/account/${tx.wallet}`}
                     target="_blank"
                     rel="noreferrer"
                     className="maker-a"
@@ -412,29 +509,86 @@ function TxRow({ tx, pool }) {
             </td>
             <td>
                 <a
-                    href={'https://solscan.io/tx/' + tx.signature}
+                    href={`https://solscan.io/tx/${tx.signature}`}
                     target="_blank"
                     rel="noreferrer"
                     className="txn-a"
-                    title={tx.signature}
+                    title={`${short(tx.signature, 6)} in ${quoteSymbol}`}
                 >
-                    {'\u2197'}
+                    <ExternalIcon />
                 </a>
             </td>
         </tr>
     );
 }
 
-function PoolLogo({ p, bg }) {
-    const [err, setErr] = useState(false);
+function PairAvatar({ pool, background, compact = false }) {
+    const [baseError, setBaseError] = useState(false);
+    const [quoteError, setQuoteError] = useState(false);
+
     return (
-        <div className="pd-logo" style={{ width: 40, height: 40, background: bg }}>
-            {p.baseLogo && !err
-                ? <img src={p.baseLogo} alt="" onError={function () { setErr(true); }} />
-                : <span className="pd-logo-init" style={{ fontSize: 14 }}>
-                    {(p.baseSymbol || '?')[0]}
-                </span>
-            }
+        <div className={`pd-pair-avatar${compact ? ' compact' : ''}`}>
+            <div className="pd-avatar-main" style={{ background }}>
+                {pool.baseLogo && !baseError ? (
+                    <img src={pool.baseLogo} alt="" onError={() => setBaseError(true)} />
+                ) : (
+                    <span>{(pool.baseSymbol || '?')[0]}</span>
+                )}
+            </div>
+            <div className="pd-avatar-quote">
+                {pool.quoteLogo && !quoteError ? (
+                    <img src={pool.quoteLogo} alt="" onError={() => setQuoteError(true)} />
+                ) : (
+                    <QuoteDot />
+                )}
+            </div>
         </div>
+    );
+}
+
+function softOverlay() {
+    return 'linear-gradient(145deg, rgba(8, 10, 18, 0.22), rgba(8, 10, 18, 0.82))';
+}
+
+function QuoteDot() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="12" fill="#6b5cff" />
+            <path
+                d="M7 16l2.5-4L12 15l2-3L16 14"
+                stroke="white"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+            />
+        </svg>
+    );
+}
+
+function BackIcon() {
+    return (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="19" y1="12" x2="5" y2="12" />
+            <polyline points="12 19 5 12 12 5" />
+        </svg>
+    );
+}
+
+function CopyIcon() {
+    return (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+    );
+}
+
+function ExternalIcon() {
+    return (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
     );
 }

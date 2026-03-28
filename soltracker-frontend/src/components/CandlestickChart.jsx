@@ -1,168 +1,345 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createChart } from 'lightweight-charts';
 import { io } from 'socket.io-client';
+import {
+    SOCKET_URL,
+    fetchPoolCandles,
+    fmtNum,
+    fmtPrice,
+    fmtUsd,
+    normalizeSocketCandle,
+} from '../utils/api';
 import './CandlestickChart.css';
 
-const SOCKET_URL = process.env.REACT_APP_WS_URL || 'http://localhost:3000';
+const RESOLUTIONS = ['1s', '1m', '5m', '15m', '1h', '4h', '1d'];
 
-export default function CandlestickChart({ poolAddress }) {
-    const chartContainerRef = useRef();
+export default function CandlestickChart({ poolAddress, baseSymbol, quoteSymbol }) {
+    const containerRef = useRef(null);
     const chartRef = useRef(null);
-    const seriesRef = useRef(null);
-    const volSeriesRef = useRef(null);
-    const [tf, setTf] = useState('5m');
+    const candleSeriesRef = useRef(null);
+    const volumeSeriesRef = useRef(null);
+    const resizeObserverRef = useRef(null);
+    const latestCandleRef = useRef(null);
+
+    const [resolution, setResolution] = useState('15m');
+    const [unit, setUnit] = useState('usd');
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [legend, setLegend] = useState(null);
+
+    const priceLabel = useMemo(() => (unit === 'usd' ? 'USD' : quoteSymbol || 'SOL'), [quoteSymbol, unit]);
 
     useEffect(() => {
-        if (!poolAddress || !chartContainerRef.current) return;
+        if (!containerRef.current) return undefined;
 
-        // 1. Initialize Chart
-        const chart = createChart(chartContainerRef.current, {
+        const chart = createChart(containerRef.current, {
             layout: {
-                background: { type: 'solid', color: '#0d0e12' },
-                textColor: '#B2B5BE',
+                background: { type: 'solid', color: '#0f1320' },
+                textColor: '#9aa4bd',
+                fontFamily: 'Inter, system-ui, sans-serif',
             },
             grid: {
-                vertLines: { color: 'rgba(43, 43, 67, 0.4)' },
-                horzLines: { color: 'rgba(43, 43, 67, 0.4)' },
+                vertLines: { color: 'rgba(148, 163, 184, 0.07)' },
+                horzLines: { color: 'rgba(148, 163, 184, 0.07)' },
             },
             crosshair: {
                 mode: 0,
-                vertLine: { width: 1, color: '#43475d', style: 3, labelBackgroundColor: '#1c1f26' },
-                horzLine: { width: 1, color: '#43475d', style: 3, labelBackgroundColor: '#1c1f26' },
+                vertLine: {
+                    color: 'rgba(148, 163, 184, 0.25)',
+                    width: 1,
+                    labelBackgroundColor: '#131926',
+                },
+                horzLine: {
+                    color: 'rgba(148, 163, 184, 0.25)',
+                    width: 1,
+                    labelBackgroundColor: '#131926',
+                },
             },
             rightPriceScale: {
-                borderColor: '#1e212b',
-                autoScale: true,
+                borderColor: 'rgba(148, 163, 184, 0.08)',
+                scaleMargins: {
+                    top: 0.08,
+                    bottom: 0.28,
+                },
             },
             timeScale: {
-                borderColor: '#1e212b',
+                borderColor: 'rgba(148, 163, 184, 0.08)',
+                rightOffset: 8,
+                barSpacing: 10,
                 timeVisible: true,
                 secondsVisible: false,
-                barSpacing: 10,
-                rightOffset: 5,
             },
-            width: chartContainerRef.current.clientWidth,
-            height: chartContainerRef.current.clientHeight,
+            width: containerRef.current.clientWidth,
+            height: containerRef.current.clientHeight,
         });
 
-        chartRef.current = chart;
-
-        const candlestickSeries = chart.addCandlestickSeries({
-            upColor: '#00d094',
-            downColor: '#ff3d71',
+        const candleSeries = chart.addCandlestickSeries({
+            upColor: '#28d9a2',
+            downColor: '#ff5a72',
+            wickUpColor: '#28d9a2',
+            wickDownColor: '#ff5a72',
             borderVisible: false,
-            wickUpColor: '#00d094',
-            wickDownColor: '#ff3d71',
+            priceLineVisible: false,
         });
-
-        candlestickSeries.applyOptions({
-            priceFormat: {
-                type: 'price',
-                precision: 8,
-                minMove: 0.00000001,
-            },
-        });
-        seriesRef.current = candlestickSeries;
 
         const volumeSeries = chart.addHistogramSeries({
-            color: '#26a69a',
+            color: 'rgba(80, 151, 255, 0.38)',
             priceFormat: { type: 'volume' },
-            priceScaleId: '', 
+            priceScaleId: '',
             scaleMargins: {
-                top: 0.8, 
+                top: 0.78,
                 bottom: 0,
             },
         });
-        volSeriesRef.current = volumeSeries;
 
-        let isMounted = true;
+        chartRef.current = chart;
+        candleSeriesRef.current = candleSeries;
+        volumeSeriesRef.current = volumeSeries;
 
-        const loadInitialData = async () => {
-            try {
-                const res = await fetch(`http://localhost:3000/pools/${poolAddress}/candles?resolution=${tf}&limit=1000`);
-                if (!res.ok) return;
-                const data = await res.json();
-                
-                if (data.candles && isMounted) {
-                    const chartData = [];
-                    const volData = [];
-                    data.candles.forEach(c => {
-                        const isUp = Number(c.close) >= Number(c.open);
-                        chartData.push({
-                            time: c.time, 
-                            open: Number(c.open),
-                            high: Number(c.high),
-                            low: Number(c.low),
-                            close: Number(c.close)
-                        });
-                        volData.push({
-                            time: c.time,
-                            value: Number(c.volume),
-                            color: isUp ? 'rgba(0, 208, 148, 0.4)' : 'rgba(255, 61, 113, 0.4)'
-                        });
-                    });
-                    candlestickSeries.setData(chartData);
-                    volumeSeries.setData(volData);
-                }
-            } catch (err) {
-                console.error("Error fetching candles:", err);
+        chart.subscribeCrosshairMove((param) => {
+            if (!param || !param.time || !candleSeriesRef.current) {
+                setLegend(latestCandleRef.current);
+                return;
             }
-        };
 
-        loadInitialData();
+            const data = param.seriesData.get(candleSeriesRef.current);
+            if (!data) {
+                setLegend(latestCandleRef.current);
+                return;
+            }
 
-        // 2. Real-Time WebSocket Logic
-        const socket = io(SOCKET_URL);
-        socket.emit('subscribe', poolAddress);
-
-        socket.on('candle_update', (c) => {
-            if (!isMounted || c.resolution !== tf) return;
-            
-            const isUp = Number(c.close) >= Number(c.open);
-            candlestickSeries.update({
-                time: c.time,
-                open: Number(c.open),
-                high: Number(c.high),
-                low: Number(c.low),
-                close: Number(c.close)
-            });
-            volumeSeries.update({
-                time: c.time,
-                value: Number(c.volume),
-                color: isUp ? 'rgba(0, 208, 148, 0.4)' : 'rgba(255, 61, 113, 0.4)'
+            setLegend({
+                time: Number(param.time),
+                open: data.open,
+                high: data.high,
+                low: data.low,
+                close: data.close,
+                volumeUsd: latestCandleRef.current?.volumeUsd ?? 0,
             });
         });
 
-        const resizeObserver = new ResizeObserver(entries => {
-            if (entries.length === 0 || entries[0].target !== chartContainerRef.current) return;
-            const newRect = entries[0].contentRect;
-            chart.applyOptions({ width: newRect.width, height: newRect.height });
+        const observer = new ResizeObserver((entries) => {
+            const rect = entries[0]?.contentRect;
+            if (!rect || !chartRef.current) return;
+            chartRef.current.applyOptions({
+                width: rect.width,
+                height: rect.height,
+            });
         });
-        resizeObserver.observe(chartContainerRef.current);
+
+        observer.observe(containerRef.current);
+        resizeObserverRef.current = observer;
 
         return () => {
-            isMounted = false;
+            resizeObserverRef.current?.disconnect();
+            chart.remove();
+            chartRef.current = null;
+            candleSeriesRef.current = null;
+            volumeSeriesRef.current = null;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!chartRef.current) return;
+
+        chartRef.current.applyOptions({
+            timeScale: {
+                secondsVisible: resolution === '1s',
+            },
+        });
+    }, [resolution]);
+
+    useEffect(() => {
+        if (!poolAddress || !candleSeriesRef.current || !volumeSeriesRef.current) return undefined;
+
+        let cancelled = false;
+
+        async function loadCandles() {
+            setLoading(true);
+            try {
+                const response = await fetchPoolCandles(poolAddress, resolution, {
+                    unit,
+                    limit: resolution === '1s' ? 900 : 700,
+                });
+
+                if (cancelled) return;
+
+                const candles = (response.candles || [])
+                    .filter((item) => item.open != null && item.high != null && item.low != null && item.close != null)
+                    .sort((left, right) => left.time - right.time);
+
+                const chartData = candles.map((item) => ({
+                    time: item.time,
+                    open: Number(item.open),
+                    high: Number(item.high),
+                    low: Number(item.low),
+                    close: Number(item.close),
+                }));
+
+                const histogramData = candles.map((item) => ({
+                    time: item.time,
+                    value: unit === 'native' ? Number(item.volumeQuote || 0) : Number(item.volumeUsd || 0),
+                    color:
+                        Number(item.close) >= Number(item.open)
+                            ? 'rgba(40, 217, 162, 0.42)'
+                            : 'rgba(255, 90, 114, 0.42)',
+                }));
+
+                candleSeriesRef.current.setData(chartData);
+                volumeSeriesRef.current.setData(histogramData);
+
+                latestCandleRef.current = candles[candles.length - 1] || null;
+                setLegend(latestCandleRef.current);
+                setError('');
+            } catch (err) {
+                if (!cancelled) {
+                    setError('Unable to load candles from the backend.');
+                    candleSeriesRef.current.setData([]);
+                    volumeSeriesRef.current.setData([]);
+                    latestCandleRef.current = null;
+                    setLegend(null);
+                }
+            } finally {
+                if (!cancelled) {
+                    setLoading(false);
+                }
+            }
+        }
+
+        loadCandles();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [poolAddress, resolution, unit]);
+
+    useEffect(() => {
+        if (!poolAddress || !candleSeriesRef.current || !volumeSeriesRef.current) return undefined;
+
+        const socket = io(SOCKET_URL, {
+            transports: ['websocket', 'polling'],
+        });
+
+        socket.emit('subscribe', poolAddress);
+
+        socket.on('candle_update', (payload) => {
+            const normalized = normalizeSocketCandle(payload, unit);
+            if (!normalized || normalized.resolution !== resolution) return;
+            if (
+                normalized.open == null ||
+                normalized.high == null ||
+                normalized.low == null ||
+                normalized.close == null
+            ) {
+                return;
+            }
+
+            candleSeriesRef.current.update({
+                time: normalized.time,
+                open: normalized.open,
+                high: normalized.high,
+                low: normalized.low,
+                close: normalized.close,
+            });
+
+            volumeSeriesRef.current.update({
+                time: normalized.time,
+                value: unit === 'native' ? Number(normalized.volumeQuote || 0) : Number(normalized.volumeUsd || 0),
+                color:
+                    normalized.close >= normalized.open
+                        ? 'rgba(40, 217, 162, 0.42)'
+                        : 'rgba(255, 90, 114, 0.42)',
+            });
+
+            latestCandleRef.current = normalized;
+            setLegend(normalized);
+        });
+
+        return () => {
             socket.emit('unsubscribe', poolAddress);
             socket.disconnect();
-            resizeObserver.disconnect();
-            chart.remove();
         };
-    }, [poolAddress, tf]);
+    }, [poolAddress, resolution, unit]);
 
     return (
-        <div className="pd-chart-wrapper">
-            <div className="pd-chart-toolbar">
-                {['1m', '5m', '15m', '1h', '4h'].map(t => (
-                    <button 
-                        key={t}
-                        className={`pd-chart-tb-btn ${tf === t ? 'active' : ''}`}
-                        onClick={() => setTf(t)}
+        <div className="chart-shell">
+            <div className="chart-toolbar">
+                <div className="chart-timeframes">
+                    {RESOLUTIONS.map((value) => (
+                        <button
+                            key={value}
+                            type="button"
+                            className={`chart-btn${resolution === value ? ' active' : ''}`}
+                            onClick={() => setResolution(value)}
+                        >
+                            {value}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="chart-toggles">
+                    <button
+                        type="button"
+                        className={`chart-btn subtle${unit === 'usd' ? ' active' : ''}`}
+                        onClick={() => setUnit('usd')}
                     >
-                        {t.toUpperCase()}
+                        USD
                     </button>
-                ))}
+                    <button
+                        type="button"
+                        className={`chart-btn subtle${unit === 'native' ? ' active' : ''}`}
+                        onClick={() => setUnit('native')}
+                    >
+                        {quoteSymbol || 'SOL'}
+                    </button>
+                </div>
             </div>
-            <div ref={chartContainerRef} className="pd-chart-container" />
+
+            <div className="chart-legend">
+                <div className="chart-legend-title">
+                    {baseSymbol || 'Pool'} / {quoteSymbol || 'SOL'} - {resolution}
+                </div>
+
+                {legend ? (
+                    <div className="chart-ohlc">
+                        <span>O {formatChartPrice(legend.open, unit)}</span>
+                        <span>H {formatChartPrice(legend.high, unit)}</span>
+                        <span>L {formatChartPrice(legend.low, unit)}</span>
+                        <span>C {formatChartPrice(legend.close, unit)}</span>
+                        <span>Vol {unit === 'usd' ? fmtUsd(legend.volumeUsd, true) : `${fmtNum(legend.volumeQuote, 2)} ${priceLabel}`}</span>
+                    </div>
+                ) : (
+                    <div className="chart-ohlc muted">Waiting for candles...</div>
+                )}
+            </div>
+
+            <div className="chart-canvas-wrap">
+                <div ref={containerRef} className="chart-canvas" />
+
+                {loading ? (
+                    <div className="chart-overlay">
+                        <div className="spinner" />
+                        <span>Loading candle history...</span>
+                    </div>
+                ) : null}
+
+                {!loading && error ? (
+                    <div className="chart-overlay error">
+                        <span>{error}</span>
+                    </div>
+                ) : null}
+            </div>
         </div>
     );
+}
+
+function formatChartPrice(value, unit) {
+    if (unit === 'usd') return fmtPrice(value);
+    if (value == null) return '-';
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '-';
+    if (Math.abs(numeric) < 0.000001) return numeric.toExponential(3);
+    if (Math.abs(numeric) < 0.001) return numeric.toFixed(8);
+    if (Math.abs(numeric) < 1) return numeric.toFixed(6);
+    return numeric.toFixed(4);
 }

@@ -632,7 +632,7 @@ function buildSwapEvents(poolSwaps, balanceChanges, signature, tx) {
     const events = [];
     const isMultiHop = poolSwaps.length > 1;
 
-    for (const { dexName, dexProgram, poolAddress, mintAmounts } of poolSwaps) {
+    for (const [poolIndex, { dexName, dexProgram, poolAddress, mintAmounts }] of poolSwaps.entries()) {
         let mints = [...mintAmounts.keys()];
 
         // Rare fallback: if pool transfers gave < 2 mints, supplement from signer balances
@@ -728,6 +728,7 @@ function buildSwapEvents(poolSwaps, balanceChanges, signature, tx) {
 
         events.push({
             signature,
+            eventIndex: poolIndex,
             poolAddress,
             dexName,
             dexProgram,

@@ -1,86 +1,170 @@
 'use strict';
-/**
- * priceService.js
- * Calculates USD value for each decoded swap.
- *
- * Strategy:
- *   1. Quote token is a stablecoin  → usdValue = quoteAmount      (1:1)
- *   2. Quote token is wSOL          → usdValue = quoteAmount × SOL/USD price
- *   3. Unknown quote token          → usdValue = null  (cannot price without oracle)
- *
- * The getSolPrice() function uses CoinGecko by default with a hardcoded
- * $150 fallback if the fetch fails or the env var SOL_PRICE_USD is set.
- * Replace with Pyth on-chain oracle in production for lower latency.
- */
 
 const axios = require('axios');
+const db = require('../config/db');
+const { safeDivide } = require('../utils/helpers');
 const { STABLECOIN_MINTS, WSOL_MINT } = require('../config/constants');
 
-// Simple in-memory cache — refresh every 60 seconds to avoid hammering CoinGecko
-let _cachedSolPrice = null;
-let _cacheLastFetched = 0;
-const CACHE_TTL_MS = 5 * 60_000;  // 5 minutes — avoids CoinGecko free tier 429s
+let cachedSolPrice = null;
+let solPriceFetchedAt = 0;
+const SOL_CACHE_TTL_MS = 5 * 60_000;
 
-/**
- * Fetch the current SOL/USD price.
- * Uses the SOL_PRICE_USD env var if set (useful for testing).
- * Falls back to $150 if the fetch fails.
- *
- * @returns {Promise<number>}
- */
+const tokenUsdCache = new Map();
+const TOKEN_CACHE_TTL_MS = 30_000;
+
+function getCachedTokenPrice(mint) {
+    const entry = tokenUsdCache.get(mint);
+    if (!entry) return undefined;
+    if ((Date.now() - entry.fetchedAt) > TOKEN_CACHE_TTL_MS) {
+        tokenUsdCache.delete(mint);
+        return undefined;
+    }
+    return entry.value;
+}
+
+function setCachedTokenPrice(mint, value) {
+    tokenUsdCache.set(mint, {
+        value,
+        fetchedAt: Date.now(),
+    });
+    return value;
+}
+
 async function getSolPrice() {
-    // Allow hardcoded override for testing / staging
     if (process.env.SOL_PRICE_USD) {
         return parseFloat(process.env.SOL_PRICE_USD);
     }
 
     const now = Date.now();
-    if (_cachedSolPrice !== null && (now - _cacheLastFetched) < CACHE_TTL_MS) {
-        return _cachedSolPrice;
+    if (cachedSolPrice !== null && (now - solPriceFetchedAt) < SOL_CACHE_TTL_MS) {
+        return cachedSolPrice;
     }
 
     try {
         const res = await axios.get(
             'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
-            { timeout: 5000 }
+            {
+                timeout: 5000,
+                proxy: false,
+            }
         );
         const price = res.data?.solana?.usd;
-        if (price && typeof price === 'number') {
-            _cachedSolPrice = price;
-            _cacheLastFetched = now;
+        if (typeof price === 'number' && price > 0) {
+            cachedSolPrice = price;
+            solPriceFetchedAt = now;
             return price;
         }
     } catch (err) {
         console.warn('[Price] CoinGecko fetch failed, using fallback:', err.message);
     }
 
-    // Fallback — prevents total failure if CoinGecko is down
-    return _cachedSolPrice ?? 150.0;
+    return cachedSolPrice ?? 150.0;
 }
 
-/**
- * Calculate the USD value of a swap event.
- *
- * @param {number}      quoteAmount  Human-readable quote token amount
- * @param {string}      quoteMint    Mint address of the quote token
- * @returns {Promise<number|null>}   USD value, or null if cannot be determined
- */
+async function getTokenUsdPrice(mint) {
+    if (!mint) return null;
+
+    if (STABLECOIN_MINTS.has(mint)) return 1;
+    if (mint === WSOL_MINT) return getSolPrice();
+
+    const cached = getCachedTokenPrice(mint);
+    if (cached !== undefined) return cached;
+
+    const direct = await db.query(
+        `SELECT ps.price_usd
+         FROM pool_stats ps
+         JOIN pools p ON p.pool_address = ps.pool_address
+         WHERE p.base_token_mint = $1
+           AND ps.price_usd IS NOT NULL
+           AND ps.price_usd > 0
+         ORDER BY COALESCE(ps.liquidity_usd, ps.liquidity, 0) DESC NULLS LAST,
+                  COALESCE(ps.volume_24h, 0) DESC NULLS LAST,
+                  ps.updated_at DESC NULLS LAST
+         LIMIT 1`,
+        [mint]
+    );
+
+    if (direct.rows[0]?.price_usd != null) {
+        return setCachedTokenPrice(mint, Number(direct.rows[0].price_usd));
+    }
+
+    const inverse = await db.query(
+        `SELECT ps.price_usd, ps.price_native
+         FROM pool_stats ps
+         JOIN pools p ON p.pool_address = ps.pool_address
+         WHERE p.quote_token_mint = $1
+           AND ps.price_usd IS NOT NULL
+           AND ps.price_native IS NOT NULL
+           AND ps.price_native > 0
+         ORDER BY COALESCE(ps.liquidity_usd, ps.liquidity, 0) DESC NULLS LAST,
+                  COALESCE(ps.volume_24h, 0) DESC NULLS LAST,
+                  ps.updated_at DESC NULLS LAST
+         LIMIT 1`,
+        [mint]
+    );
+
+    if (inverse.rows[0]?.price_usd != null && inverse.rows[0]?.price_native != null) {
+        return setCachedTokenPrice(
+            mint,
+            safeDivide(Number(inverse.rows[0].price_usd), Number(inverse.rows[0].price_native))
+        );
+    }
+
+    return setCachedTokenPrice(mint, null);
+}
+
 async function calculateUsdValue(quoteAmount, quoteMint) {
     if (quoteAmount == null || !quoteMint) return null;
-
-    // Case 1: Stablecoin — 1 unit = $1 USD
-    if (STABLECOIN_MINTS.has(quoteMint)) {
-        return quoteAmount;
-    }
-
-    // Case 2: Wrapped SOL
-    if (quoteMint === WSOL_MINT) {
-        const solUsd = await getSolPrice();
-        return quoteAmount * solUsd;
-    }
-
-    // Case 3: Unknown token — cannot price without a dedicated oracle
-    return null;
+    const quotePriceUsd = await getTokenUsdPrice(quoteMint);
+    if (quotePriceUsd == null) return null;
+    return quoteAmount * quotePriceUsd;
 }
 
-module.exports = { calculateUsdValue, getSolPrice };
+async function buildSwapPricing({
+    baseMint,
+    quoteMint,
+    baseAmount,
+    quoteAmount,
+    priceNative,
+}) {
+    const solPrice = await getSolPrice();
+    const quotePriceUsd = await getTokenUsdPrice(quoteMint);
+    const directBasePriceUsd = await getTokenUsdPrice(baseMint);
+
+    let priceUsd = null;
+    if (quotePriceUsd != null && priceNative != null) {
+        priceUsd = priceNative * quotePriceUsd;
+    } else if (directBasePriceUsd != null) {
+        priceUsd = directBasePriceUsd;
+    }
+
+    const resolvedQuotePriceUsd = quotePriceUsd ?? safeDivide(priceUsd, priceNative);
+
+    let usdValue = null;
+    if (resolvedQuotePriceUsd != null && quoteAmount != null) {
+        usdValue = quoteAmount * resolvedQuotePriceUsd;
+    } else if (priceUsd != null && baseAmount != null) {
+        usdValue = baseAmount * priceUsd;
+    }
+
+    let priceSol = null;
+    if (quoteMint === WSOL_MINT) {
+        priceSol = priceNative;
+    } else if (priceUsd != null) {
+        priceSol = safeDivide(priceUsd, solPrice);
+    }
+
+    return {
+        priceUsd,
+        priceSol,
+        quotePriceUsd: resolvedQuotePriceUsd,
+        usdValue,
+    };
+}
+
+module.exports = {
+    buildSwapPricing,
+    calculateUsdValue,
+    getSolPrice,
+    getTokenUsdPrice,
+};

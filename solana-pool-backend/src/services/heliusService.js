@@ -43,6 +43,7 @@ async function getTransaction(signature) {
         response = await axios.post(rpcUrl, body, {
             headers: { 'Content-Type': 'application/json' },
             timeout: 20000,
+            proxy: false,
         });
     } catch (err) {
         if (err.response) {

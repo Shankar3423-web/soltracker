@@ -1,62 +1,210 @@
 'use strict';
-/**
- * poolsRoute.js
- * Read-only API endpoints for the frontend.
- * All responses are JSON.  No write operations here.
- *
- * Endpoints:
- *
- *   GET /pools/dex/:dexName
- *     List all pools for a DEX name, sorted by 24h volume.
- *     Query params: limit (default 50), offset (default 0)
- *     Response: { dexName, total, pools: [ poolSummary, ... ] }
- *
- *   GET /pools/:poolAddress
- *     Full detail for one pool: stats + recent transactions.
- *     Query params: limit (default 50), offset (default 0)
- *     Response: { pool, stats, transactions: [ swap, ... ] }
- *
- *   GET /pools/:poolAddress/transactions
- *     Paginated raw swap list for a pool.
- *     Query params: limit, offset, side (buy|sell|all)
- *     Response: { poolAddress, total, transactions: [ swap, ... ] }
- *
- *   GET /pools/:poolAddress/stats
- *     Just the stats row for a single pool (lightweight).
- *     Response: { poolAddress, stats }
- *
- *   GET /pools/:poolAddress/candles
- *     Retrieves OHLCV candle data for charting.
- *     Query params: resolution (1m|5m|15m|30m|1h|4h|24h), limit
- *     Response: { poolAddress, resolution, candles: [ {time, open, high, low, close, volume}, ... ] }
- */
 
 const express = require('express');
 const router = express.Router();
 
 const db = require('../config/db');
-const { getPoolStats,
-    getPoolStatsByDex } = require('../repositories/poolStatsRepository');
+const { getPoolStats, getPoolStatsByDex } = require('../repositories/poolStatsRepository');
 const { aggregatePool } = require('../services/aggregationService');
 const { calculateLiquidity } = require('../services/liquidityService');
+const { getCandles, RESOLUTIONS } = require('../services/ohlcvService');
 
-// ─── helper ──────────────────────────────────────────────────────────────────
 function parsePositiveInt(value, defaultVal) {
     const n = parseInt(value, 10);
-    return isNaN(n) || n < 0 ? defaultVal : n;
+    return Number.isNaN(n) || n < 0 ? defaultVal : n;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  GET /pools/dex/:dexName
-//  List all pools for a DEX ordered by 24h volume desc.
-// ─────────────────────────────────────────────────────────────────────────────
+function toNumber(value) {
+    return value == null ? null : Number(value);
+}
+
+function windowKey(label) {
+    return label === '24h' ? '24h' : label;
+}
+
+function formatWindowStats(stats, label) {
+    const suffix = label === '24h' ? '24h' : label;
+    return {
+        total: Number(stats[`tx_count_${suffix}`] ?? 0),
+        buys: Number(stats[`buys_${suffix}`] ?? 0),
+        sells: Number(stats[`sells_${suffix}`] ?? 0),
+    };
+}
+
+function formatStats(stats) {
+    if (!stats) return null;
+
+    return {
+        price: toNumber(stats.price_usd ?? stats.price),
+        priceUsd: toNumber(stats.price_usd ?? stats.price),
+        priceNative: toNumber(stats.price_native),
+        priceSol: toNumber(stats.price_sol),
+        liquidity: {
+            usd: toNumber(stats.liquidity_usd ?? stats.liquidity),
+            base: toNumber(stats.liquidity_base),
+            quote: toNumber(stats.liquidity_quote),
+        },
+        fdv: toNumber(stats.fdv),
+        marketCap: toNumber(stats.market_cap),
+        priceChange: {
+            m5: toNumber(stats.price_change_5m),
+            h1: toNumber(stats.price_change_1h),
+            h6: toNumber(stats.price_change_6h),
+            h24: toNumber(stats.price_change_24h),
+        },
+        txns: {
+            m5: formatWindowStats(stats, '5m'),
+            h1: formatWindowStats(stats, '1h'),
+            h6: formatWindowStats(stats, '6h'),
+            h24: formatWindowStats(stats, '24h'),
+        },
+        volume: {
+            m5: toNumber(stats.volume_5m),
+            h1: toNumber(stats.volume_1h),
+            h6: toNumber(stats.volume_6h),
+            h24: toNumber(stats.volume_24h),
+        },
+        buyVolume: {
+            m5: toNumber(stats.buy_volume_5m),
+            h1: toNumber(stats.buy_volume_1h),
+            h6: toNumber(stats.buy_volume_6h),
+            h24: toNumber(stats.buy_volume_24h),
+        },
+        sellVolume: {
+            m5: toNumber(stats.sell_volume_5m),
+            h1: toNumber(stats.sell_volume_1h),
+            h6: toNumber(stats.sell_volume_6h),
+            h24: toNumber(stats.sell_volume_24h),
+        },
+        makers: {
+            m5: Number(stats.makers_5m ?? 0),
+            h1: Number(stats.makers_1h ?? 0),
+            h6: Number(stats.makers_6h ?? 0),
+            h24: Number(stats.makers_24h ?? 0),
+        },
+        buyers: {
+            m5: Number(stats.buyers_5m ?? 0),
+            h1: Number(stats.buyers_1h ?? 0),
+            h6: Number(stats.buyers_6h ?? 0),
+            h24: Number(stats.buyers_24h ?? 0),
+        },
+        sellers: {
+            m5: Number(stats.sellers_5m ?? 0),
+            h1: Number(stats.sellers_1h ?? 0),
+            h6: Number(stats.sellers_6h ?? 0),
+            h24: Number(stats.sellers_24h ?? 0),
+        },
+        updatedAt: stats.updated_at,
+    };
+}
+
+function formatPoolSummary(row) {
+    const baseSymbol = row.base_symbol ?? row.base_symbol_t ?? null;
+    const quoteSymbol = row.quote_symbol ?? row.quote_symbol_t ?? null;
+    return {
+        poolAddress: row.pool_address,
+        dexName: row.dex_name ?? null,
+        pairName: baseSymbol && quoteSymbol ? `${baseSymbol}/${quoteSymbol}` : null,
+        baseSymbol,
+        quoteSymbol,
+        baseName: row.base_name ?? null,
+        quoteName: row.quote_name ?? null,
+        baseLogo: row.base_logo ?? null,
+        quoteLogo: row.quote_logo ?? null,
+        baseMint: row.base_token_mint,
+        quoteMint: row.quote_token_mint,
+        stats: formatStats(row),
+    };
+}
+
+function formatPoolDetail(row) {
+    const baseSymbol = row.base_symbol ?? row.base_symbol_t ?? null;
+    const quoteSymbol = row.quote_symbol ?? row.quote_symbol_t ?? null;
+    return {
+        poolAddress: row.pool_address,
+        dexName: row.dex_name,
+        pairName: baseSymbol && quoteSymbol ? `${baseSymbol}/${quoteSymbol}` : null,
+        baseMint: row.base_token_mint,
+        quoteMint: row.quote_token_mint,
+        baseSymbol,
+        quoteSymbol,
+        baseName: row.base_name ?? null,
+        quoteName: row.quote_name ?? null,
+        baseLogo: row.base_logo ?? null,
+        quoteLogo: row.quote_logo ?? null,
+        createdAt: row.created_at,
+    };
+}
+
+function formatTx(row) {
+    return {
+        signature: row.signature,
+        eventIndex: Number(row.event_index ?? 0),
+        wallet: row.wallet,
+        baseAmount: toNumber(row.base_amount),
+        quoteAmount: toNumber(row.quote_amount),
+        price: toNumber(row.price_usd ?? row.price),
+        priceUsd: toNumber(row.price_usd),
+        priceNative: toNumber(row.price),
+        priceSol: toNumber(row.price_sol),
+        quotePriceUsd: toNumber(row.quote_price_usd),
+        usdValue: toNumber(row.usd_value),
+        swapSide: row.swap_side,
+        classification: row.classification,
+        slot: row.slot,
+        blockTime: row.block_time,
+    };
+}
+
+async function ensurePoolStats(poolAddress, poolRow) {
+    let stats = await getPoolStats(poolAddress);
+    if (!stats) {
+        stats = await aggregatePool(poolAddress);
+    }
+
+    if (
+        stats &&
+        (stats.liquidity_usd == null || Number(stats.liquidity_usd) <= 0) &&
+        poolRow
+    ) {
+        const liquidity = await calculateLiquidity(
+            poolAddress,
+            poolRow.base_token_mint,
+            poolRow.quote_token_mint,
+            stats.price_native != null ? Number(stats.price_native) : null,
+            stats.price_usd != null ? Number(stats.price_usd) : (stats.price != null ? Number(stats.price) : null)
+        );
+
+        if (liquidity) {
+            await db.query(
+                `UPDATE pool_stats
+                 SET liquidity = $1,
+                     liquidity_usd = $1,
+                     liquidity_base = $2,
+                     liquidity_quote = $3,
+                     liquidity_updated_at = NOW(),
+                     updated_at = NOW()
+                 WHERE pool_address = $4`,
+                [
+                    liquidity.liquidityUsd,
+                    liquidity.liquidityBase,
+                    liquidity.liquidityQuote,
+                    poolAddress,
+                ]
+            );
+            stats = await getPoolStats(poolAddress);
+        }
+    }
+
+    return stats;
+}
+
 router.get('/dex/:dexName', async (req, res, next) => {
     try {
         const { dexName } = req.params;
         const limit = parsePositiveInt(req.query.limit, 50);
         const offset = parsePositiveInt(req.query.offset, 0);
 
-        // Resolve dex name → id
         const dexResult = await db.query(
             'SELECT id FROM dexes WHERE LOWER(name) = LOWER($1) LIMIT 1',
             [dexName]
@@ -64,11 +212,9 @@ router.get('/dex/:dexName', async (req, res, next) => {
         if (!dexResult.rows.length) {
             return res.status(404).json({ error: `DEX not found: ${dexName}` });
         }
+
         const dexId = dexResult.rows[0].id;
-
         const rows = await getPoolStatsByDex(dexId, Math.min(limit, 200), offset);
-
-        // Count total pools for this DEX (for pagination)
         const countResult = await db.query(
             'SELECT COUNT(*) AS total FROM pools WHERE dex_id = $1',
             [dexId]
@@ -76,7 +222,7 @@ router.get('/dex/:dexName', async (req, res, next) => {
 
         return res.json({
             dexName,
-            total: parseInt(countResult.rows[0].total, 10),
+            total: Number(countResult.rows[0].total ?? 0),
             limit,
             offset,
             pools: rows.map(formatPoolSummary),
@@ -86,115 +232,30 @@ router.get('/dex/:dexName', async (req, res, next) => {
     }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  GET /pools/:poolAddress
-//  Full pool detail: metadata + stats + recent 50 transactions.
-// ─────────────────────────────────────────────────────────────────────────────
-router.get('/:poolAddress', async (req, res, next) => {
-    try {
-        const { poolAddress } = req.params;
-        const txLimit = parsePositiveInt(req.query.limit, 50);
-        const txOffset = parsePositiveInt(req.query.offset, 0);
-
-        // Pool record
-        const poolResult = await db.query(
-            `SELECT p.*, d.name AS dex_name,
-              bt.symbol AS base_symbol_t,  bt.name AS base_name,  bt.logo_url AS base_logo,
-              qt.symbol AS quote_symbol_t, qt.name AS quote_name, qt.logo_url AS quote_logo
-       FROM pools p
-       JOIN dexes d  ON d.id  = p.dex_id
-       LEFT JOIN tokens bt ON bt.mint = p.base_token_mint
-       LEFT JOIN tokens qt ON qt.mint = p.quote_token_mint
-       WHERE p.pool_address = $1 LIMIT 1`,
-            [poolAddress]
-        );
-        if (!poolResult.rows.length) {
-            return res.status(404).json({ error: `Pool not found: ${poolAddress}` });
-        }
-        const poolRow = poolResult.rows[0];
-
-        // Stats
-        let stats = await getPoolStats(poolAddress);
-        if (!stats) {
-            // Compute on-demand if not yet aggregated
-            await aggregatePool(poolAddress);
-            stats = await getPoolStats(poolAddress);
-        }
-
-        // Refresh liquidity on-demand if missing
-        if (stats && stats.liquidity === null) {
-            const liq = await calculateLiquidity(
-                poolAddress,
-                poolRow.base_token_mint,
-                poolRow.quote_token_mint,
-                stats?.price ? Number(stats.price) : null
-            );
-            if (liq !== null) {
-                await db.query(
-                    'UPDATE pool_stats SET liquidity = $1 WHERE pool_address = $2',
-                    [liq, poolAddress]
-                );
-                if (stats) stats.liquidity = liq;
-            }
-        }
-
-        // Recent transactions
-        const txResult = await db.query(
-            `SELECT signature, wallet, base_amount, quote_amount, price,
-              usd_value, swap_side, classification, slot, block_time
-       FROM swaps
-       WHERE pool_address = $1
-       ORDER BY block_time DESC NULLS LAST
-       LIMIT $2 OFFSET $3`,
-            [poolAddress, Math.min(txLimit, 500), txOffset]
-        );
-
-        const txCountResult = await db.query(
-            'SELECT COUNT(*) AS total FROM swaps WHERE pool_address = $1',
-            [poolAddress]
-        );
-
-        return res.json({
-            pool: formatPoolDetail(poolRow),
-            stats: formatStats(stats),
-            transactions: {
-                totalAllTime: parseInt(txCountResult.rows[0].total, 10),
-                limit: txLimit,
-                offset: txOffset,
-                items: txResult.rows.map(formatTx),
-            },
-        });
-    } catch (err) {
-        next(err);
-    }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  GET /pools/:poolAddress/transactions
-//  Paginated transaction list with optional side filter.
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/:poolAddress/transactions', async (req, res, next) => {
     try {
         const { poolAddress } = req.params;
         const limit = parsePositiveInt(req.query.limit, 50);
         const offset = parsePositiveInt(req.query.offset, 0);
-        const side = req.query.side;   // 'buy' | 'sell' | undefined
+        const side = req.query.side;
 
-        const sideFilter = (side === 'buy' || side === 'sell') ? side : null;
+        const sideFilter = side === 'buy' || side === 'sell' ? side : null;
 
         const query = sideFilter
-            ? `SELECT signature, wallet, base_amount, quote_amount, price, usd_value,
-                swap_side, classification, slot, block_time
-         FROM swaps
-         WHERE pool_address = $1 AND swap_side = $2
-         ORDER BY block_time DESC NULLS LAST
-         LIMIT $3 OFFSET $4`
-            : `SELECT signature, wallet, base_amount, quote_amount, price, usd_value,
-                swap_side, classification, slot, block_time
-         FROM swaps
-         WHERE pool_address = $1
-         ORDER BY block_time DESC NULLS LAST
-         LIMIT $2 OFFSET $3`;
+            ? `SELECT signature, event_index, wallet, base_amount, quote_amount, price,
+                      price_usd, price_sol, quote_price_usd, usd_value,
+                      swap_side, classification, slot, block_time
+               FROM swaps
+               WHERE pool_address = $1 AND swap_side = $2
+               ORDER BY block_time DESC NULLS LAST, event_index DESC
+               LIMIT $3 OFFSET $4`
+            : `SELECT signature, event_index, wallet, base_amount, quote_amount, price,
+                      price_usd, price_sol, quote_price_usd, usd_value,
+                      swap_side, classification, slot, block_time
+               FROM swaps
+               WHERE pool_address = $1
+               ORDER BY block_time DESC NULLS LAST, event_index DESC
+               LIMIT $2 OFFSET $3`;
 
         const params = sideFilter
             ? [poolAddress, sideFilter, Math.min(limit, 500), offset]
@@ -210,7 +271,7 @@ router.get('/:poolAddress/transactions', async (req, res, next) => {
 
         return res.json({
             poolAddress,
-            total: parseInt(countResult.rows[0].total, 10),
+            total: Number(countResult.rows[0].total ?? 0),
             limit,
             offset,
             side: sideFilter ?? 'all',
@@ -221,110 +282,119 @@ router.get('/:poolAddress/transactions', async (req, res, next) => {
     }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  GET /pools/:poolAddress/stats
-//  Lightweight stats-only endpoint (for chart headers, etc.)
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/:poolAddress/stats', async (req, res, next) => {
     try {
         const { poolAddress } = req.params;
-        let stats = await getPoolStats(poolAddress);
-        if (!stats) {
-            await aggregatePool(poolAddress);
-            stats = await getPoolStats(poolAddress);
+        const poolResult = await db.query(
+            'SELECT * FROM pools WHERE pool_address = $1 LIMIT 1',
+            [poolAddress]
+        );
+        if (!poolResult.rows.length) {
+            return res.status(404).json({ error: `Pool not found: ${poolAddress}` });
         }
+
+        const stats = await ensurePoolStats(poolAddress, poolResult.rows[0]);
         if (!stats) {
             return res.status(404).json({ error: `No stats found for pool: ${poolAddress}` });
         }
-        return res.json({ poolAddress, stats: formatStats(stats) });
+
+        return res.json({
+            poolAddress,
+            stats: formatStats(stats),
+        });
     } catch (err) {
         next(err);
     }
 });
 
+router.get('/:poolAddress/candles', async (req, res, next) => {
+    try {
+        const { poolAddress } = req.params;
+        const resolution = String(req.query.resolution ?? '1m');
+        if (!RESOLUTIONS[resolution]) {
+            return res.status(400).json({
+                error: `Unsupported resolution. Expected one of: ${Object.keys(RESOLUTIONS).join(', ')}`,
+            });
+        }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Formatters — keep API shape consistent
-// ─────────────────────────────────────────────────────────────────────────────
+        const limit = parsePositiveInt(req.query.limit, 300);
+        const unit = req.query.unit === 'native' ? 'native' : 'usd';
+        const from = req.query.from ? new Date(Number(req.query.from)) : null;
+        const to = req.query.to ? new Date(Number(req.query.to)) : null;
 
-function formatPoolSummary(row) {
-    return {
-        poolAddress: row.pool_address,
-        dexName: row.dex_name ?? null,
-        baseSymbol: row.base_symbol ?? row.base_symbol_t ?? null,
-        quoteSymbol: row.quote_symbol ?? row.quote_symbol_t ?? null,
-        baseName: row.base_name ?? null,
-        quoteName: row.quote_name ?? null,
-        baseLogo: row.base_logo ?? null,
-        quoteLogo: row.quote_logo ?? null,
-        baseMint: row.base_token_mint,
-        quoteMint: row.quote_token_mint,
-        price: row.price != null ? Number(row.price) : null,
-        volume24h: row.volume_24h != null ? Number(row.volume_24h) : null,
-        buyVolume24h: row.buy_volume_24h != null ? Number(row.buy_volume_24h) : null,
-        sellVolume24h: row.sell_volume_24h != null ? Number(row.sell_volume_24h) : null,
-        buyers24h: Number(row.buyers_24h ?? 0),
-        sellers24h: Number(row.sellers_24h ?? 0),
-        liquidity: row.liquidity != null ? Number(row.liquidity) : null,
-        txCount24h: Number(row.tx_count_24h ?? 0),
-        buys24h: Number(row.buys_24h ?? 0),
-        sells24h: Number(row.sells_24h ?? 0),
-        makers24h: Number(row.makers_24h ?? 0),
-        fdv: row.fdv != null ? Number(row.fdv) : null,
-        marketCap: row.market_cap != null ? Number(row.market_cap) : null,
-        updatedAt: row.updated_at,
-    };
-}
+        const candles = await getCandles(poolAddress, resolution, {
+            from,
+            to,
+            limit,
+            unit,
+        });
 
-function formatPoolDetail(row) {
-    return {
-        poolAddress: row.pool_address,
-        dexName: row.dex_name,
-        baseMint: row.base_token_mint,
-        quoteMint: row.quote_token_mint,
-        baseSymbol: row.base_symbol ?? row.base_symbol_t ?? null,
-        quoteSymbol: row.quote_symbol ?? row.quote_symbol_t ?? null,
-        baseName: row.base_name ?? null,
-        quoteName: row.quote_name ?? null,
-        baseLogo: row.base_logo ?? null,
-        quoteLogo: row.quote_logo ?? null,
-        createdAt: row.created_at,
-    };
-}
+        return res.json({
+            poolAddress,
+            resolution,
+            unit,
+            candles,
+        });
+    } catch (err) {
+        next(err);
+    }
+});
 
-function formatStats(stats) {
-    if (!stats) return null;
-    return {
-        price: stats.price != null ? Number(stats.price) : null,
-        volume24h: stats.volume_24h != null ? Number(stats.volume_24h) : null,
-        buyVolume24h: stats.buy_volume_24h != null ? Number(stats.buy_volume_24h) : null,
-        sellVolume24h: stats.sell_volume_24h != null ? Number(stats.sell_volume_24h) : null,
-        buyers24h: Number(stats.buyers_24h ?? 0),
-        sellers24h: Number(stats.sellers_24h ?? 0),
-        liquidity: stats.liquidity != null ? Number(stats.liquidity) : null,
-        txCount24h: Number(stats.tx_count_24h ?? 0),
-        buys24h: Number(stats.buys_24h ?? 0),
-        sells24h: Number(stats.sells_24h ?? 0),
-        makers24h: Number(stats.makers_24h ?? 0),
-        fdv: stats.fdv != null ? Number(stats.fdv) : null,
-        marketCap: stats.market_cap != null ? Number(stats.market_cap) : null,
-        updatedAt: stats.updated_at,
-    };
-}
+router.get('/:poolAddress', async (req, res, next) => {
+    try {
+        const { poolAddress } = req.params;
+        const txLimit = parsePositiveInt(req.query.limit, 50);
+        const txOffset = parsePositiveInt(req.query.offset, 0);
 
-function formatTx(row) {
-    return {
-        signature: row.signature,
-        wallet: row.wallet,
-        baseAmount: row.base_amount != null ? Number(row.base_amount) : null,
-        quoteAmount: row.quote_amount != null ? Number(row.quote_amount) : null,
-        price: row.price != null ? Number(row.price) : null,
-        usdValue: row.usd_value != null ? Number(row.usd_value) : null,
-        swapSide: row.swap_side,
-        classification: row.classification,
-        slot: row.slot,
-        blockTime: row.block_time,
-    };
-}
+        const poolResult = await db.query(
+            `SELECT p.*, d.name AS dex_name,
+                    bt.symbol AS base_symbol_t, bt.name AS base_name, bt.logo_url AS base_logo,
+                    qt.symbol AS quote_symbol_t, qt.name AS quote_name, qt.logo_url AS quote_logo
+             FROM pools p
+             JOIN dexes d ON d.id = p.dex_id
+             LEFT JOIN tokens bt ON bt.mint = p.base_token_mint
+             LEFT JOIN tokens qt ON qt.mint = p.quote_token_mint
+             WHERE p.pool_address = $1
+             LIMIT 1`,
+            [poolAddress]
+        );
+
+        if (!poolResult.rows.length) {
+            return res.status(404).json({ error: `Pool not found: ${poolAddress}` });
+        }
+
+        const poolRow = poolResult.rows[0];
+        const stats = await ensurePoolStats(poolAddress, poolRow);
+
+        const txResult = await db.query(
+            `SELECT signature, event_index, wallet, base_amount, quote_amount, price,
+                    price_usd, price_sol, quote_price_usd, usd_value,
+                    swap_side, classification, slot, block_time
+             FROM swaps
+             WHERE pool_address = $1
+             ORDER BY block_time DESC NULLS LAST, event_index DESC
+             LIMIT $2 OFFSET $3`,
+            [poolAddress, Math.min(txLimit, 500), txOffset]
+        );
+
+        const txCountResult = await db.query(
+            'SELECT COUNT(*) AS total FROM swaps WHERE pool_address = $1',
+            [poolAddress]
+        );
+
+        return res.json({
+            pool: formatPoolDetail(poolRow),
+            stats: formatStats(stats),
+            transactions: {
+                totalAllTime: Number(txCountResult.rows[0].total ?? 0),
+                limit: txLimit,
+                offset: txOffset,
+                items: txResult.rows.map(formatTx),
+            },
+        });
+    } catch (err) {
+        next(err);
+    }
+});
 
 module.exports = router;
