@@ -9,8 +9,11 @@ const db = require('../config/db');
 async function upsertPoolStats(data) {
     if (!data.poolAddress) return null;
 
-    // Convert camelCase to snake_case for PostgreSQL
-    const toSnake = (s) => s.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+    // Convert camelCase window metrics like `priceChange5m` into `price_change_5m`.
+    const toSnake = (value) => value
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .replace(/(\d+)([smhd])/gi, '_$1$2')
+        .toLowerCase();
 
     const keys = Object.keys(data);
     const columns = keys.map(toSnake);

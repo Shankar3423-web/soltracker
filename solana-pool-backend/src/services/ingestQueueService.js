@@ -141,24 +141,22 @@ async function markCompleted(signature) {
 async function markFailed(signature, attempts, errorMessage) {
     const exhausted = attempts >= MAX_RETRIES;
     const delayMs = RETRY_DELAY_MS * Math.max(attempts, 1);
+    const nextAttemptAt = exhausted ? new Date() : new Date(Date.now() + delayMs);
 
     await db.query(
         `
         UPDATE webhook_ingest_queue
         SET
-            status = $2,
+            status = $2::VARCHAR,
             updated_at = NOW(),
-            next_attempt_at = CASE
-                WHEN $2 = 'failed' THEN NOW()
-                ELSE NOW() + ($3::TEXT)::INTERVAL
-            END,
+            next_attempt_at = $3,
             last_error = $4
         WHERE signature = $1
         `,
         [
             signature,
             exhausted ? 'failed' : 'pending',
-            `${delayMs} milliseconds`,
+            nextAttemptAt,
             errorMessage?.slice(0, 1000) ?? 'Unknown ingest error',
         ]
     );
