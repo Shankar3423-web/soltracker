@@ -5,9 +5,19 @@ const db = require('../config/db');
 const { getTokenUsdPrice } = require('./priceService');
 const { safeDivide } = require('../utils/helpers');
 
+let liquidityRpcBackoffUntil = 0;
+let lastLiquidity429LogAt = 0;
+const LIQUIDITY_RPC_BACKOFF_MS = 2 * 60_000;
+const LIQUIDITY_LOG_THROTTLE_MS = 60_000;
+
+function isLiquidityRateLimited() {
+    return Date.now() < liquidityRpcBackoffUntil;
+}
+
 async function getTokenAccountsByOwner(ownerPubkey) {
     const rpcUrl = process.env.HELIUS_RPC_URL;
     if (!rpcUrl) return [];
+    if (isLiquidityRateLimited()) return [];
 
     const tokenPrograms = [
         'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
@@ -46,6 +56,15 @@ async function getTokenAccountsByOwner(ownerPubkey) {
                 });
             }
         } catch (err) {
+            if (err.response?.status === 429) {
+                liquidityRpcBackoffUntil = Date.now() + LIQUIDITY_RPC_BACKOFF_MS;
+                if ((Date.now() - lastLiquidity429LogAt) > LIQUIDITY_LOG_THROTTLE_MS) {
+                    lastLiquidity429LogAt = Date.now();
+                    console.warn('[Liquidity] Helius RPC rate limited liquidity refresh. Backing off for 2 minutes.');
+                }
+                return [];
+            }
+
             console.warn(`[Liquidity] getTokenAccountsByOwner failed for ${ownerPubkey}:`, err.message);
         }
     }
@@ -121,6 +140,10 @@ async function refreshAllLiquidity() {
         `);
 
         for (const row of result.rows) {
+            if (isLiquidityRateLimited()) {
+                break;
+            }
+
             const liquidity = await calculateLiquidity(
                 row.pool_address,
                 row.base_token_mint,

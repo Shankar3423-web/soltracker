@@ -1,72 +1,74 @@
 'use strict';
-/**
- * schedulerService.js
- *
- * Jobs:
- *   • Every 5min  → aggregateAllPools()   (was 60s — reduced to save memory)
- *   • Every 10min → refreshAllLiquidity() (was 120s — reduced to save memory)
- *   • Every 14min → self-ping /health     (keeps Render free tier awake)
- */
 
 const https = require('https');
 const http = require('http');
 const { aggregateAllPools } = require('./aggregationService');
 const { refreshAllLiquidity } = require('./liquidityService');
 
-let _started = false;
+let started = false;
 
-/* ── Keep Render free tier awake ──────────────────────────────────────────── */
+const ENABLE_AGGREGATION_JOBS = process.env.ENABLE_AGGREGATION_JOBS !== 'false';
+const ENABLE_LIQUIDITY_REFRESH = process.env.ENABLE_LIQUIDITY_REFRESH !== 'false';
+const ENABLE_KEEP_ALIVE = process.env.ENABLE_KEEP_ALIVE !== 'false';
+
 function startKeepAlive() {
-    const url = process.env.RENDER_EXTERNAL_URL;
-    if (!url) {
-        console.log('[KeepAlive] RENDER_EXTERNAL_URL not set — skipping');
+    if (!ENABLE_KEEP_ALIVE) {
+        console.log('[KeepAlive] Disabled by ENABLE_KEEP_ALIVE=false');
         return;
     }
+
+    const url = process.env.RENDER_EXTERNAL_URL;
+    if (!url) {
+        console.log('[KeepAlive] RENDER_EXTERNAL_URL not set - skipping');
+        return;
+    }
+
     const pingUrl = url.replace(/\/$/, '') + '/health';
     const client = pingUrl.startsWith('https') ? https : http;
 
     function ping() {
         client.get(pingUrl, (res) => {
-            console.log('[KeepAlive] Pinged /health →', res.statusCode);
-        }).on('error', (e) => {
-            console.warn('[KeepAlive] Ping error:', e.message);
+            console.log('[KeepAlive] Pinged /health ->', res.statusCode);
+        }).on('error', (err) => {
+            console.warn('[KeepAlive] Ping error:', err.message);
         });
     }
 
-    setInterval(ping, 14 * 60 * 1000); // every 14 minutes
-    console.log('[KeepAlive] Self-ping every 14min →', pingUrl);
+    setInterval(ping, 14 * 60 * 1000);
+    console.log('[KeepAlive] Self-ping every 14min ->', pingUrl);
 }
 
-/* ── Main scheduler ───────────────────────────────────────────────────────── */
 function startScheduler() {
-    if (_started) return;
-    _started = true;
+    if (started) return;
+    started = true;
 
     console.log('[Scheduler] Starting background jobs...');
 
-    // Delay first run by 10s to let DB settle after startup
-    setTimeout(() => {
-        aggregateAllPools().catch(() => { });
-    }, 10_000);
+    if (ENABLE_AGGREGATION_JOBS) {
+        setTimeout(() => {
+            aggregateAllPools().catch(() => { });
+        }, 10_000);
 
-    // Delay liquidity refresh by 30s — heavier job, run after aggregation
-    setTimeout(() => {
-        refreshAllLiquidity().catch(() => { });
-    }, 30_000);
+        setInterval(() => {
+            aggregateAllPools().catch(() => { });
+        }, 5 * 60_000);
+    } else {
+        console.log('[Scheduler] Aggregation jobs disabled by ENABLE_AGGREGATION_JOBS=false');
+    }
 
-    // Aggregation every 5 minutes (was 60s — 300s reduces CPU/memory spikes)
-    setInterval(() => {
-        aggregateAllPools().catch(() => { });
-    }, 5 * 60_000);
+    if (ENABLE_LIQUIDITY_REFRESH) {
+        setTimeout(() => {
+            refreshAllLiquidity().catch(() => { });
+        }, 30_000);
 
-    // Liquidity every 10 minutes (was 120s — RPC calls are the main memory user)
-    setInterval(() => {
-        refreshAllLiquidity().catch(() => { });
-    }, 10 * 60_000);
+        setInterval(() => {
+            refreshAllLiquidity().catch(() => { });
+        }, 10 * 60_000);
+    } else {
+        console.log('[Scheduler] Liquidity refresh disabled by ENABLE_LIQUIDITY_REFRESH=false');
+    }
 
-    // Keep Render awake
     startKeepAlive();
-
     console.log('[Scheduler] Aggregation every 5min, liquidity every 10min');
 }
 

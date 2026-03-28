@@ -2,6 +2,13 @@
 const { Server } = require('socket.io');
 
 let _io = null;
+const SOCKET_DEBUG = process.env.SOCKET_DEBUG === 'true';
+
+function logSocket(...args) {
+    if (SOCKET_DEBUG) {
+        console.log(...args);
+    }
+}
 
 function initSocket(httpServer) {
     if (_io) return _io;
@@ -14,25 +21,25 @@ function initSocket(httpServer) {
     });
 
     _io.on('connection', (socket) => {
-        console.log(`[Socket] New connection: ${socket.id}`);
+        logSocket(`[Socket] New connection: ${socket.id}`);
 
         // Join room based on pool address for targeted updates
         socket.on('subscribe', (poolAddress) => {
             if (poolAddress) {
                 socket.join(poolAddress);
-                console.log(`[Socket] Client ${socket.id} subscribed to pool: ${poolAddress}`);
+                logSocket(`[Socket] Client ${socket.id} subscribed to pool: ${poolAddress}`);
             }
         });
 
         socket.on('unsubscribe', (poolAddress) => {
             if (poolAddress) {
                 socket.leave(poolAddress);
-                console.log(`[Socket] Client ${socket.id} unsubscribed from: ${poolAddress}`);
+                logSocket(`[Socket] Client ${socket.id} unsubscribed from: ${poolAddress}`);
             }
         });
 
         socket.on('disconnect', () => {
-            console.log(`[Socket] Connection closed: ${socket.id}`);
+            logSocket(`[Socket] Connection closed: ${socket.id}`);
         });
     });
 

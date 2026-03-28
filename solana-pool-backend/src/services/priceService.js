@@ -8,6 +8,10 @@ const { STABLECOIN_MINTS, WSOL_MINT } = require('../config/constants');
 let cachedSolPrice = null;
 let solPriceFetchedAt = 0;
 const SOL_CACHE_TTL_MS = 5 * 60_000;
+let solPriceBackoffUntil = 0;
+let lastCoinGecko429LogAt = 0;
+const SOL_PRICE_BACKOFF_MS = 5 * 60_000;
+const PRICE_LOG_THROTTLE_MS = 60_000;
 
 const tokenUsdCache = new Map();
 const TOKEN_CACHE_TTL_MS = 30_000;
@@ -39,6 +43,9 @@ async function getSolPrice() {
     if (cachedSolPrice !== null && (now - solPriceFetchedAt) < SOL_CACHE_TTL_MS) {
         return cachedSolPrice;
     }
+    if (now < solPriceBackoffUntil) {
+        return cachedSolPrice ?? 150.0;
+    }
 
     try {
         const res = await axios.get(
@@ -55,7 +62,15 @@ async function getSolPrice() {
             return price;
         }
     } catch (err) {
-        console.warn('[Price] CoinGecko fetch failed, using fallback:', err.message);
+        if (err.response?.status === 429) {
+            solPriceBackoffUntil = now + SOL_PRICE_BACKOFF_MS;
+            if ((now - lastCoinGecko429LogAt) > PRICE_LOG_THROTTLE_MS) {
+                lastCoinGecko429LogAt = now;
+                console.warn('[Price] CoinGecko rate limited SOL pricing. Using cached/fallback price for 5 minutes.');
+            }
+        } else {
+            console.warn('[Price] CoinGecko fetch failed, using fallback:', err.message);
+        }
     }
 
     return cachedSolPrice ?? 150.0;
