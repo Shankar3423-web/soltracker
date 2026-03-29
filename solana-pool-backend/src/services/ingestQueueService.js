@@ -24,7 +24,7 @@ function getAllowedPools() {
         return new Set(
             raw
                 .split(',')
-                .map((value) => value.trim())
+                .map((value) => value.trim().toLowerCase())
                 .filter(Boolean)
         );
     }
@@ -204,7 +204,7 @@ async function processTransaction(signature) {
 
     const allowedPools = getAllowedPools();
     const filteredSwapEvents = allowedPools.size
-        ? swapEvents.filter((event) => allowedPools.has(event.poolAddress))
+        ? swapEvents.filter((event) => allowedPools.has((event.poolAddress || '').toLowerCase()))
         : swapEvents;
 
     if (filteredSwapEvents.length === 0) {
