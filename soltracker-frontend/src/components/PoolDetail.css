@@ -1,16 +1,19 @@
 .pd {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 364px;
+    grid-template-columns: minmax(0, 1fr) clamp(340px, 25vw, 392px);
+    width: 100%;
+    flex: 1 1 auto;
     height: 100%;
     min-height: 0;
+    min-width: 0;
     background:
         radial-gradient(circle at top left, rgba(71, 128, 255, 0.12), transparent 28%),
         linear-gradient(180deg, #0a0f18 0%, #090d16 100%);
 }
 
 .pd-main {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) clamp(250px, 34vh, 330px);
     min-width: 0;
     min-height: 0;
     border-right: 1px solid rgba(148, 163, 184, 0.08);
@@ -19,17 +22,29 @@
 .pd-side {
     display: flex;
     flex-direction: column;
+    width: 100%;
+    min-width: clamp(340px, 25vw, 392px);
+    max-width: none;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
+    border-left: 1px solid rgba(148, 163, 184, 0.08);
     background: linear-gradient(180deg, rgba(11, 16, 27, 0.96), rgba(9, 13, 22, 0.98));
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.pd-side::-webkit-scrollbar {
+    width: 0;
+    height: 0;
 }
 
 .pd-header {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    gap: 18px;
-    padding: 16px 20px;
+    gap: 14px;
+    padding: 14px 18px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.08);
     background: rgba(11, 16, 27, 0.94);
     backdrop-filter: blur(16px);
@@ -144,16 +159,15 @@
 }
 
 .pd-chart-panel {
-    flex: 1;
-    min-height: 320px;
+    min-height: 0;
+    display: flex;
     border-bottom: 1px solid rgba(148, 163, 184, 0.08);
 }
 
 .pd-table-panel {
     display: flex;
     flex-direction: column;
-    min-height: 280px;
-    max-height: 38%;
+    min-height: 0;
 }
 
 .pd-table-toolbar {
@@ -314,8 +328,8 @@
 }
 
 .pd-stat-hero {
-    min-height: 132px;
-    padding: 20px;
+    min-height: 116px;
+    padding: 16px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.08);
     background-size: cover;
     background-position: center;
@@ -345,17 +359,17 @@
 
 .pd-stat-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    padding: 16px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+    padding: 12px;
 }
 
 .pd-metric-card {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 14px;
-    border-radius: 16px;
+    gap: 5px;
+    padding: 12px;
+    border-radius: 14px;
     border: 1px solid rgba(148, 163, 184, 0.1);
     background: rgba(16, 22, 35, 0.94);
 }
@@ -371,7 +385,7 @@
 .pd-metric-card strong {
     color: #f6f9ff;
     font-family: var(--font-mono);
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1.3;
 }
 
@@ -379,11 +393,22 @@
     background: linear-gradient(180deg, rgba(29, 39, 61, 0.98), rgba(17, 24, 39, 0.98));
 }
 
+.pd-stat-grid .pd-metric-card:nth-child(1),
+.pd-stat-grid .pd-metric-card:nth-child(2) {
+    grid-column: span 3;
+}
+
+.pd-stat-grid .pd-metric-card:nth-child(3),
+.pd-stat-grid .pd-metric-card:nth-child(4),
+.pd-stat-grid .pd-metric-card:nth-child(5) {
+    grid-column: span 2;
+}
+
 .pd-window-bar {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
-    padding: 0 16px 16px;
+    padding: 0 12px 12px;
 }
 
 .pd-window-btn {
@@ -424,8 +449,8 @@
 .pd-side-stats {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-    padding: 0 16px 16px;
+    gap: 8px;
+    padding: 0 12px 12px;
 }
 
 .pd-snapshot-card,
@@ -439,8 +464,8 @@
 .pd-snapshot-card {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 14px;
+    gap: 5px;
+    padding: 12px;
 }
 
 .pd-snapshot-card span,
@@ -457,12 +482,12 @@
 .pd-split-copy strong {
     color: #f6f9ff;
     font-family: var(--font-mono);
-    font-size: 15px;
+    font-size: 14px;
 }
 
 .pd-split-card {
     grid-column: 1 / -1;
-    padding: 14px;
+    padding: 12px;
 }
 
 .pd-split-copy {
@@ -500,7 +525,7 @@
 }
 
 .pd-info-card {
-    margin: 0 16px 18px;
+    margin: 0 12px 12px;
     padding: 4px 0;
 }
 
@@ -509,7 +534,7 @@
     justify-content: space-between;
     align-items: center;
     gap: 12px;
-    padding: 14px 16px;
+    padding: 12px 14px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.08);
 }
 
@@ -641,7 +666,11 @@
 
 @media (max-width: 1380px) {
     .pd {
-        grid-template-columns: minmax(0, 1fr) 320px;
+        grid-template-columns: minmax(0, 1fr) clamp(320px, 27vw, 356px);
+    }
+
+    .pd-side {
+        min-width: clamp(320px, 27vw, 356px);
     }
 }
 

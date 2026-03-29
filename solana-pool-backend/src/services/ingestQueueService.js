@@ -11,9 +11,26 @@ const RETRY_DELAY_MS = 2_000;
 const MAX_RETRIES = 5;
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
 const HEARTBEAT_MS = 15 * 1000;
+const TEST_POOL_ALLOWLIST = new Set([
+    'dx5wfoszxvnd6xyyajajuqrglqdaurtvh2jmhz6ejdnt',
+]);
 
 let workerStarted = false;
 let workerRunning = false;
+
+function getAllowedPools() {
+    const raw = process.env.POOL_ALLOWLIST;
+    if (typeof raw === 'string' && raw.trim()) {
+        return new Set(
+            raw
+                .split(',')
+                .map((value) => value.trim())
+                .filter(Boolean)
+        );
+    }
+
+    return TEST_POOL_ALLOWLIST;
+}
 
 async function enqueueWebhookSignatures(signatures = []) {
     const unique = [...new Set(
@@ -185,9 +202,22 @@ async function processTransaction(signature) {
         return;
     }
 
-    console.log('[IngestQueue] Found', swapEvents.length, 'swap(s) in', signature.slice(0, 16) + '...');
+    const allowedPools = getAllowedPools();
+    const filteredSwapEvents = allowedPools.size
+        ? swapEvents.filter((event) => allowedPools.has(event.poolAddress))
+        : swapEvents;
 
-    for (const event of swapEvents) {
+    if (filteredSwapEvents.length === 0) {
+        console.log(
+            '[IngestQueue] Decoded swaps skipped by pool allowlist:',
+            signature.slice(0, 16) + '...'
+        );
+        return;
+    }
+
+    console.log('[IngestQueue] Found', filteredSwapEvents.length, 'allowed swap(s) in', signature.slice(0, 16) + '...');
+
+    for (const event of filteredSwapEvents) {
         const stored = await persistDecodedSwapEvent(event, wallet);
 
         if (!stored.inserted) continue;

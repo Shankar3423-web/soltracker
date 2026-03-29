@@ -63,6 +63,7 @@ async function getPoolStatsByDex(dexId, limit = 100, offset = 0) {
        ps.*,
        p.base_token_mint,
        p.quote_token_mint,
+       p.created_at,
        p.base_symbol,
        p.quote_symbol,
        d.name        AS dex_name,

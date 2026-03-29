@@ -4,6 +4,7 @@ import "./LoginModal.css";
 import ConnectWallet from "./ConnectWallet";
 import { useWallet } from "@solana/wallet-adapter-react";
 import React, { useEffect } from 'react';
+import { BASE } from "../utils/api";
 
 export default function LoginModal({ onClose }) {
   const { connected } = useWallet();
@@ -20,7 +21,7 @@ export default function LoginModal({ onClose }) {
       const user = result.user;
       const token = await user.getIdToken();
 
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/auth/google`, {
+      const response = await fetch(`${BASE}/auth/google`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

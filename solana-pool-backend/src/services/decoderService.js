@@ -608,7 +608,7 @@ function computeBalanceChanges(tx, accountKeys) {
  *         token is a stablecoin that stays with the signer
  *
  *     DUST < absSolDelta ≤ RENT_THRESHOLD:
- *       → Delta is only ATA rent residual — use B (pool transfer)
+ *       → Delta is only ATA rent noise — use B (pool transfer)
  *         Works for: all multi-hop SOL intermediary hops
  *
  *     absSolDelta ≤ DUST:
@@ -686,19 +686,30 @@ function buildSwapEvents(poolSwaps, balanceChanges, signature, tx) {
         const baseAmount = mintAmounts.get(baseMint) ?? Math.abs(baseChange);
 
         // ── quoteAmount: FIX 1 decision tree ───────────────────────────────────
+        // Modified: In multi-hop trades, using the total signer SOL delta across 
+        // every hop overcounts volume. We now only use absSolDelta for simple swaps.
         const absSolDelta = Math.abs(quoteChange);
+        const quoteTransferAmount = mintAmounts.get(quoteMint) ?? 0;
+        const quoteIsStable = STABLECOIN_MINTS.has(quoteMint);
         let quoteAmount;
 
-        if (absSolDelta > RENT_THRESHOLD) {
-            // Real SOL/stable delta — use signer net (more accurate: excludes fees to others)
-            // Valid for: simple direct swaps AND multi-hop where final token stays with signer
+        if (!isMultiHop && absSolDelta > RENT_THRESHOLD) {
+            // Simple swap: signer net delta is Authoritative (exact P&L, includes fees)
             quoteAmount = absSolDelta;
+        } else if (isMultiHop && quoteIsStable && absSolDelta > RENT_THRESHOLD) {
+            // Final stablecoin leg of a routed swap stayed with the signer.
+            // Prefer signer net to avoid counting gross pool-side fee transfers.
+            quoteAmount = absSolDelta;
+        } else if (quoteTransferAmount > DUST_THRESHOLD) {
+            // Multi-hop OR simple swap with rent noise: use pool transfer sum (gross)
+            // This prevents volume duplication across hops in a single transaction.
+            quoteAmount = quoteTransferAmount;
         } else if (absSolDelta > DUST_THRESHOLD) {
-            // Delta exists but is only ATA rent noise — use pool transfer
-            quoteAmount = mintAmounts.get(quoteMint) ?? 0;
+            // Fallback when transfer parsing missed the quote mint but signer delta is real.
+            quoteAmount = absSolDelta;
         } else {
-            // Delta ≈ 0 (SOL/stable was an intermediary passed to next hop) — use pool transfer
-            quoteAmount = mintAmounts.get(quoteMint) ?? 0;
+            // Fallback
+            quoteAmount = 0;
         }
 
         if (baseAmount === 0 && quoteAmount === 0) {

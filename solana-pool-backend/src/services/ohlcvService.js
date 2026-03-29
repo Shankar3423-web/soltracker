@@ -74,6 +74,8 @@ async function processSwapForCandles({
                 tx_count,
                 buys,
                 sells,
+                first_trade_time,
+                last_trade_time,
                 updated_at
             )
             VALUES (
@@ -83,9 +85,37 @@ async function processSwapForCandles({
                 $6, $7, $8,
                 1,
                 $9, $10,
+                $11, $11,
                 NOW()
             )
             ON CONFLICT (pool_address, resolution, time_bucket) DO UPDATE SET
+                -- Open price is corrected if an earlier trade arrives late
+                open_price = CASE
+                    WHEN pool_candles.first_trade_time IS NULL
+                      OR EXCLUDED.first_trade_time < pool_candles.first_trade_time
+                    THEN EXCLUDED.open_price
+                    ELSE pool_candles.open_price
+                END,
+                open_price_native = CASE
+                    WHEN pool_candles.first_trade_time IS NULL
+                      OR EXCLUDED.first_trade_time < pool_candles.first_trade_time
+                    THEN EXCLUDED.open_price_native
+                    ELSE pool_candles.open_price_native
+                END,
+                -- Close price is corrected if a newer trade arrives out of order
+                close_price = CASE
+                    WHEN pool_candles.last_trade_time IS NULL
+                      OR EXCLUDED.last_trade_time >= pool_candles.last_trade_time
+                    THEN EXCLUDED.close_price
+                    ELSE pool_candles.close_price
+                END,
+                close_price_native = CASE
+                    WHEN pool_candles.last_trade_time IS NULL
+                      OR EXCLUDED.last_trade_time >= pool_candles.last_trade_time
+                    THEN EXCLUDED.close_price_native
+                    ELSE pool_candles.close_price_native
+                END,
+                -- High/Low/Volume as before
                 high_price = CASE
                     WHEN EXCLUDED.high_price IS NULL THEN pool_candles.high_price
                     WHEN pool_candles.high_price IS NULL THEN EXCLUDED.high_price
@@ -96,7 +126,6 @@ async function processSwapForCandles({
                     WHEN pool_candles.low_price IS NULL THEN EXCLUDED.low_price
                     ELSE LEAST(pool_candles.low_price, EXCLUDED.low_price)
                 END,
-                close_price = COALESCE(EXCLUDED.close_price, pool_candles.close_price),
                 high_price_native = CASE
                     WHEN EXCLUDED.high_price_native IS NULL THEN pool_candles.high_price_native
                     WHEN pool_candles.high_price_native IS NULL THEN EXCLUDED.high_price_native
@@ -107,7 +136,16 @@ async function processSwapForCandles({
                     WHEN pool_candles.low_price_native IS NULL THEN EXCLUDED.low_price_native
                     ELSE LEAST(pool_candles.low_price_native, EXCLUDED.low_price_native)
                 END,
-                close_price_native = COALESCE(EXCLUDED.close_price_native, pool_candles.close_price_native),
+                -- Chronological tracking update
+                first_trade_time = CASE
+                    WHEN pool_candles.first_trade_time IS NULL THEN EXCLUDED.first_trade_time
+                    ELSE LEAST(pool_candles.first_trade_time, EXCLUDED.first_trade_time)
+                END,
+                last_trade_time = CASE
+                    WHEN pool_candles.last_trade_time IS NULL THEN EXCLUDED.last_trade_time
+                    ELSE GREATEST(pool_candles.last_trade_time, EXCLUDED.last_trade_time)
+                END,
+                -- Aggregates
                 volume_usd = COALESCE(pool_candles.volume_usd, 0) + EXCLUDED.volume_usd,
                 volume_base = COALESCE(pool_candles.volume_base, 0) + EXCLUDED.volume_base,
                 volume_quote = COALESCE(pool_candles.volume_quote, 0) + EXCLUDED.volume_quote,
@@ -127,6 +165,7 @@ async function processSwapForCandles({
                 quoteAmount ?? 0,
                 swapSide === 'buy' ? 1 : 0,
                 swapSide === 'sell' ? 1 : 0,
+                blockTime,
             ]
         );
 

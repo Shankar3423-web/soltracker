@@ -6,22 +6,6 @@ import TopBar from './components/TopBar';
 import PoolList from './components/PoolList';
 import PoolDetail from './components/PoolDetail';
 
-function EmptyState() {
-    return (
-        <div className="app-empty">
-            <div className="app-empty-glow" />
-            <div className="app-empty-card">
-                <span className="app-empty-kicker">SOLANA MARKET FEED</span>
-                <h1>Select a pool to open the live market view</h1>
-                <p>
-                    Price, candles, live swaps, rolling 5m / 1h / 6h / 24h stats, liquidity,
-                    FDV, market cap, and maker flow will render here as soon as you pick a pair.
-                </p>
-            </div>
-        </div>
-    );
-}
-
 export default function App() {
     const [activeDex, setActiveDex] = useState(null);
     const [selectedPool, setSelectedPool] = useState(null);
@@ -33,28 +17,30 @@ export default function App() {
 
     return (
         <div className="app-shell">
-            <Sidebar />
+            <Sidebar onSelectSolana={() => handleDexChange(null)} />
             <div className="app-main">
-                <TopBar activeDex={activeDex} onDexChange={handleDexChange} />
-                <div className="app-body">
-                    <section className="app-list-panel">
-                        <PoolList
-                            activeDex={activeDex}
-                            selectedPoolAddress={selectedPool?.poolAddress ?? null}
-                            onSelectPool={setSelectedPool}
-                        />
-                    </section>
-
-                    <section className="app-detail-panel">
-                        {selectedPool ? (
+                <TopBar
+                    activeDex={activeDex}
+                    onDexChange={handleDexChange}
+                    selectedPool={selectedPool}
+                />
+                <div className={`app-body${selectedPool ? ' has-detail' : ' pools-only'}`}>
+                    {selectedPool ? (
+                        <section className="app-detail-panel open">
                             <PoolDetail
                                 pool={selectedPool}
                                 onClose={() => setSelectedPool(null)}
                             />
-                        ) : (
-                            <EmptyState />
-                        )}
-                    </section>
+                        </section>
+                    ) : (
+                        <section className="app-list-panel">
+                            <PoolList
+                                activeDex={activeDex}
+                                selectedPoolAddress={selectedPool?.poolAddress ?? null}
+                                onSelectPool={setSelectedPool}
+                            />
+                        </section>
+                    )}
                 </div>
             </div>
         </div>

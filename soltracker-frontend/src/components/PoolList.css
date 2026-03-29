@@ -5,7 +5,7 @@
     min-height: 0;
     overflow: hidden;
     background:
-        radial-gradient(circle at top left, rgba(79, 180, 255, 0.12), transparent 34%),
+        radial-gradient(circle at top left, rgba(79, 180, 255, 0.1), transparent 34%),
         linear-gradient(180deg, rgba(14, 20, 32, 0.98), rgba(9, 12, 20, 0.98));
 }
 
@@ -14,7 +14,7 @@
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 12px;
-    padding: 16px 18px 14px;
+    padding: 14px 18px 12px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.08);
     background: rgba(11, 16, 27, 0.92);
     backdrop-filter: blur(16px);
@@ -79,8 +79,10 @@
 
 .pl-table {
     width: 100%;
+    min-width: 1180px;
     border-collapse: collapse;
-    font-size: 12.5px;
+    font-size: 11.5px;
+    table-layout: fixed;
 }
 
 .pl-table thead {
@@ -93,13 +95,13 @@
 
 .pl-table th,
 .pl-table td {
-    padding: 13px 16px;
+    padding: 11px 10px;
     white-space: nowrap;
 }
 
 .pl-table th {
     color: #72809a;
-    font-size: 10.5px;
+    font-size: 10px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     text-align: left;
@@ -122,14 +124,14 @@
 
 .sort-arrow {
     display: inline-block;
-    width: 10px;
-    margin-left: 6px;
+    width: 8px;
+    margin-left: 4px;
 }
 
 .pl-row {
     border-bottom: 1px solid rgba(148, 163, 184, 0.06);
     cursor: pointer;
-    transition: background 120ms ease, transform 120ms ease;
+    transition: background 120ms ease;
 }
 
 .pl-row:hover {
@@ -167,13 +169,13 @@
 .tc {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
 }
 
 .tc-logos {
     position: relative;
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
     flex-shrink: 0;
 }
 
@@ -186,8 +188,8 @@
 }
 
 .tc-base {
-    width: 36px;
-    height: 36px;
+    width: 30px;
+    height: 30px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 12px 28px rgba(8, 10, 18, 0.26);
@@ -204,8 +206,8 @@
     position: absolute;
     right: 0;
     bottom: 0;
-    width: 18px;
-    height: 18px;
+    width: 15px;
+    height: 15px;
     border-radius: 999px;
     border: 2px solid #111824;
     background: #6c5cff;
@@ -213,7 +215,7 @@
 
 .tc-initial {
     color: white;
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 800;
     text-transform: uppercase;
 }
@@ -233,7 +235,7 @@
 
 .tc-base-sym {
     color: #f4f7ff;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
 }
 
@@ -243,14 +245,14 @@
 }
 
 .tc-quote-sym {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
 }
 
 .tc-meta {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 6px;
     min-width: 0;
 }
 
@@ -258,20 +260,11 @@
     display: inline-flex;
     align-items: center;
     max-width: 100%;
-    padding: 2px 7px;
+    padding: 1px 6px;
     border-radius: 999px;
     border: 1px solid transparent;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
-}
-
-.tc-addr {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: #7f8ba5;
-    font-family: var(--font-mono);
-    font-size: 10px;
 }
 
 .pl-empty {
@@ -287,13 +280,51 @@
     gap: 10px;
 }
 
-@media (max-width: 1400px) {
-    .pl-table th:nth-child(6),
-    .pl-table td:nth-child(6),
-    .pl-table th:nth-child(7),
-    .pl-table td:nth-child(7) {
-        display: none;
-    }
+.pl-table th:nth-child(1),
+.pl-table td:nth-child(1) {
+    width: 40px;
+}
+
+.pl-table th:nth-child(2),
+.pl-table td:nth-child(2) {
+    width: 240px;
+}
+
+.pl-table th:nth-child(3),
+.pl-table td:nth-child(3),
+.pl-table th:nth-child(7),
+.pl-table td:nth-child(7),
+.pl-table th:nth-child(13),
+.pl-table td:nth-child(13) {
+    width: 86px;
+}
+
+.pl-table th:nth-child(4),
+.pl-table td:nth-child(4) {
+    width: 94px;
+}
+
+.pl-table th:nth-child(5),
+.pl-table td:nth-child(5) {
+    width: 58px;
+}
+
+.pl-table th:nth-child(6),
+.pl-table td:nth-child(6),
+.pl-table th:nth-child(8),
+.pl-table td:nth-child(8) {
+    width: 78px;
+}
+
+.pl-table th:nth-child(9),
+.pl-table td:nth-child(9),
+.pl-table th:nth-child(10),
+.pl-table td:nth-child(10),
+.pl-table th:nth-child(11),
+.pl-table td:nth-child(11),
+.pl-table th:nth-child(12),
+.pl-table td:nth-child(12) {
+    width: 70px;
 }
 
 @media (max-width: 980px) {

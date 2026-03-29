@@ -9,6 +9,7 @@ let liquidityRpcBackoffUntil = 0;
 let lastLiquidity429LogAt = 0;
 const LIQUIDITY_RPC_BACKOFF_MS = 2 * 60_000;
 const LIQUIDITY_LOG_THROTTLE_MS = 60_000;
+const MIN_MEANINGFUL_LIQUIDITY_USD = 1;
 
 function isLiquidityRateLimited() {
     return Date.now() < liquidityRpcBackoffUntil;
@@ -72,13 +73,26 @@ async function getTokenAccountsByOwner(ownerPubkey) {
     return accounts;
 }
 
+function selectDominantVault(vaults, mint) {
+    let selected = null;
+
+    for (const vault of vaults) {
+        if (vault.mint !== mint) continue;
+        if (!selected || (vault.uiAmount ?? 0) > (selected.uiAmount ?? 0)) {
+            selected = vault;
+        }
+    }
+
+    return selected;
+}
+
 async function calculateLiquidity(poolAddress, baseMint, quoteMint, latestPriceNative, latestPriceUsd) {
     try {
         const vaults = await getTokenAccountsByOwner(poolAddress);
         if (vaults.length === 0) return null;
 
-        const baseVault = vaults.find((vault) => vault.mint === baseMint) ?? null;
-        const quoteVault = vaults.find((vault) => vault.mint === quoteMint) ?? null;
+        const baseVault = selectDominantVault(vaults, baseMint);
+        const quoteVault = selectDominantVault(vaults, quoteMint);
 
         const liquidityBase = baseVault?.uiAmount ?? null;
         const liquidityQuote = quoteVault?.uiAmount ?? null;
@@ -108,6 +122,10 @@ async function calculateLiquidity(poolAddress, baseMint, quoteMint, latestPriceN
         }
 
         if (pricedSides === 0) return null;
+        if (!Number.isFinite(liquidityUsd) || liquidityUsd <= 0) return null;
+        if (liquidityUsd < MIN_MEANINGFUL_LIQUIDITY_USD) {
+            return null;
+        }
 
         return {
             liquidityUsd,

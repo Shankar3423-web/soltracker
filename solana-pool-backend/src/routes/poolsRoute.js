@@ -113,6 +113,7 @@ function formatPoolSummary(row) {
         quoteLogo: row.quote_logo ?? null,
         baseMint: row.base_token_mint,
         quoteMint: row.quote_token_mint,
+        createdAt: row.created_at ?? null,
         stats: formatStats(row),
     };
 }

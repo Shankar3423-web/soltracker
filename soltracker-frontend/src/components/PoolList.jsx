@@ -27,12 +27,10 @@ export default function PoolList({ activeDex, onSelectPool, selectedPoolAddress 
         const sources = getDexSources(activeDex);
 
         async function load(showLoader) {
-            if (showLoader) {
-                setLoading(true);
-            }
+            if (showLoader) setLoading(true);
 
             try {
-                const nextPools = await fetchPoolsForSources(sources, 60);
+                const nextPools = await fetchPoolsForSources(sources, 80);
                 if (!cancelled) {
                     setPools(nextPools);
                     setError('');
@@ -76,21 +74,13 @@ export default function PoolList({ activeDex, onSelectPool, selectedPoolAddress 
                 .some((value) => String(value).toLowerCase().includes(query));
         });
 
-        const sorted = filtered.slice().sort((left, right) => {
-            const leftValue = sortableValue(left, sort.col);
-            const rightValue = sortableValue(right, sort.col);
-
-            if (typeof leftValue === 'string' || typeof rightValue === 'string') {
-                const cmp = String(leftValue).localeCompare(String(rightValue));
-                return sort.dir === 'desc' ? -cmp : cmp;
-            }
-
-            const a = Number.isFinite(leftValue) ? leftValue : Number.NEGATIVE_INFINITY;
-            const b = Number.isFinite(rightValue) ? rightValue : Number.NEGATIVE_INFINITY;
-            return sort.dir === 'desc' ? b - a : a - b;
+        return filtered.slice().sort((left, right) => {
+            const a = sortableValue(left, sort.col);
+            const b = sortableValue(right, sort.col);
+            const leftValue = Number.isFinite(a) ? a : Number.NEGATIVE_INFINITY;
+            const rightValue = Number.isFinite(b) ? b : Number.NEGATIVE_INFINITY;
+            return sort.dir === 'desc' ? rightValue - leftValue : leftValue - rightValue;
         });
-
-        return sorted;
     }, [pools, search, sort]);
 
     function toggleSort(col) {
@@ -126,22 +116,25 @@ export default function PoolList({ activeDex, onSelectPool, selectedPoolAddress 
                 <table className="pl-table">
                     <thead>
                         <tr>
-                            <th style={{ width: 46 }}>#</th>
-                            <th style={{ minWidth: 220 }}>Pair</th>
+                            <th style={{ width: 42 }}>#</th>
+                            <th style={{ minWidth: 240 }}>Token</th>
+                            <SortHeader col="marketCap" label="MCap" sort={sort} onSort={toggleSort} />
                             <SortHeader col="priceUsd" label="Price" sort={sort} onSort={toggleSort} />
-                            <SortHeader col="updatedAt" label="Updated" sort={sort} onSort={toggleSort} />
+                            <SortHeader col="ageAt" label="Age" sort={sort} onSort={toggleSort} />
                             <SortHeader col="txCount24h" label="Txns" sort={sort} onSort={toggleSort} />
                             <SortHeader col="volume24h" label="Volume" sort={sort} onSort={toggleSort} />
                             <SortHeader col="makers24h" label="Makers" sort={sort} onSort={toggleSort} />
-                            <SortHeader col="priceChange24h" label="24h %" sort={sort} onSort={toggleSort} />
+                            <SortHeader col="priceChange5m" label="5m" sort={sort} onSort={toggleSort} />
+                            <SortHeader col="priceChange1h" label="1h" sort={sort} onSort={toggleSort} />
+                            <SortHeader col="priceChange6h" label="6h" sort={sort} onSort={toggleSort} />
+                            <SortHeader col="priceChange24h" label="24h" sort={sort} onSort={toggleSort} />
                             <SortHeader col="liquidity" label="Liquidity" sort={sort} onSort={toggleSort} />
                         </tr>
                     </thead>
-
                     <tbody>
                         {loading ? (
                             <tr>
-                                <td className="pl-empty" colSpan="9">
+                                <td className="pl-empty" colSpan="13">
                                     <div className="pl-loading">
                                         <div className="spinner" />
                                         <span>Loading live pools from the backend...</span>
@@ -150,13 +143,11 @@ export default function PoolList({ activeDex, onSelectPool, selectedPoolAddress 
                             </tr>
                         ) : error ? (
                             <tr>
-                                <td className="pl-empty" colSpan="9">
-                                    {error}
-                                </td>
+                                <td className="pl-empty" colSpan="13">{error}</td>
                             </tr>
                         ) : visiblePools.length === 0 ? (
                             <tr>
-                                <td className="pl-empty" colSpan="9">
+                                <td className="pl-empty" colSpan="13">
                                     {search
                                         ? 'No pools match this search yet.'
                                         : 'No decoded pools are available yet. Wait for webhook traffic or backfill.'}
@@ -182,16 +173,24 @@ export default function PoolList({ activeDex, onSelectPool, selectedPoolAddress 
 
 function sortableValue(pool, col) {
     switch (col) {
+        case 'marketCap':
+            return pool.marketCap ?? -1;
         case 'priceUsd':
             return pool.priceUsd ?? -1;
-        case 'updatedAt':
-            return pool.updatedAt ? new Date(pool.updatedAt).getTime() : -1;
+        case 'ageAt':
+            return pool.ageAt ? new Date(pool.ageAt).getTime() : -1;
         case 'txCount24h':
             return pool.txCount24h ?? -1;
         case 'volume24h':
             return pool.volume24h ?? -1;
         case 'makers24h':
             return pool.makers24h ?? -1;
+        case 'priceChange5m':
+            return pool.priceChange5m ?? -999999;
+        case 'priceChange1h':
+            return pool.priceChange1h ?? -999999;
+        case 'priceChange6h':
+            return pool.priceChange6h ?? -999999;
         case 'priceChange24h':
             return pool.priceChange24h ?? -999999;
         case 'liquidity':
@@ -206,16 +205,12 @@ function SortHeader({ col, label, sort, onSort }) {
     return (
         <th className="r sort" onClick={() => onSort(col)}>
             <span className={active ? 'is-active' : ''}>{label}</span>
-            <span className="sort-arrow">
-                {active ? (sort.dir === 'desc' ? 'v' : '^') : ''}
-            </span>
+            <span className="sort-arrow">{active ? (sort.dir === 'desc' ? 'v' : '^') : ''}</span>
         </th>
     );
 }
 
 function PoolRow({ pool, rank, selected, onClick }) {
-    const pct = pool.priceChange24h;
-    const positive = pct != null && pct >= 0;
     const quoteSymbol = pool.quoteSymbol || 'SOL';
     const baseSymbol = pool.baseSymbol || short(pool.baseMint || pool.poolAddress, 4);
     const bg = avatarGrad(pool.poolAddress);
@@ -223,9 +218,7 @@ function PoolRow({ pool, rank, selected, onClick }) {
 
     return (
         <tr className={`pl-row${selected ? ' selected' : ''}`} onClick={onClick}>
-            <td>
-                <span className="rank">#{rank}</span>
-            </td>
+            <td><span className="rank">#{rank}</span></td>
 
             <td>
                 <div className="tc">
@@ -248,24 +241,32 @@ function PoolRow({ pool, rank, selected, onClick }) {
                             >
                                 {pool.dexName || 'Unknown'}
                             </span>
-                            <span className="tc-addr">{short(pool.poolAddress, 5)}</span>
                         </div>
                     </div>
                 </div>
             </td>
 
+            <td className="r mono">{fmtUsd(pool.marketCap, true)}</td>
             <td className="r mono">{fmtPrice(pool.priceUsd)}</td>
-            <td className="r muted">{fmtAge(pool.updatedAt)}</td>
+            <td className="r muted">{fmtAge(pool.ageAt)}</td>
             <td className="r mono">{fmtNum(pool.txCount24h, 0)}</td>
             <td className="r mono">{fmtUsd(pool.volume24h, true)}</td>
             <td className="r mono">{fmtNum(pool.makers24h, 0)}</td>
-            <td className="r">
-                <span className={positive ? 'green' : 'red'}>
-                    {fmtPct(pool.priceChange24h)}
-                </span>
-            </td>
+            <PercentCell value={pool.priceChange5m} />
+            <PercentCell value={pool.priceChange1h} />
+            <PercentCell value={pool.priceChange6h} />
+            <PercentCell value={pool.priceChange24h} />
             <td className="r mono">{fmtUsd(pool.liquidity, true)}</td>
         </tr>
+    );
+}
+
+function PercentCell({ value }) {
+    const positive = value != null && value >= 0;
+    return (
+        <td className="r">
+            <span className={positive ? 'green' : 'red'}>{fmtPct(value)}</span>
+        </td>
     );
 }
 

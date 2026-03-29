@@ -18,7 +18,8 @@ async function run() {
                 pool_stats, 
                 pools, 
                 tokens,
-                users
+                users,
+                pool_candles
             RESTART IDENTITY CASCADE;
         `;
         

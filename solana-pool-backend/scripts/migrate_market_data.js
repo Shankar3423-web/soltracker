@@ -130,6 +130,21 @@ async function run() {
         `);
 
         await pool.query(`
+            ALTER TABLE pool_candles
+            ADD COLUMN IF NOT EXISTS first_trade_time TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS last_trade_time TIMESTAMP;
+        `);
+
+        await pool.query(`
+            UPDATE pool_candles
+            SET
+                first_trade_time = COALESCE(first_trade_time, time_bucket),
+                last_trade_time = COALESCE(last_trade_time, time_bucket)
+            WHERE first_trade_time IS NULL
+               OR last_trade_time IS NULL;
+        `);
+
+        await pool.query(`
             CREATE INDEX IF NOT EXISTS idx_pool_candles_lookup
             ON pool_candles (pool_address, resolution, time_bucket DESC);
         `);

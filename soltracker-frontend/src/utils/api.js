@@ -165,6 +165,7 @@ export function normalizeTransaction(tx) {
 
 export function normalizePoolSummary(row) {
     const stats = normalizeStats(row?.stats);
+    const createdAt = row.createdAt ?? row.created_at ?? null;
     return {
         poolAddress: row.poolAddress,
         dexName: row.dexName ?? null,
@@ -177,11 +178,16 @@ export function normalizePoolSummary(row) {
         quoteLogo: row.quoteLogo ?? null,
         baseMint: row.baseMint ?? null,
         quoteMint: row.quoteMint ?? null,
-        createdAt: row.createdAt ?? null,
+        createdAt,
         stats,
+        marketCap: stats?.marketCap ?? stats?.fdv ?? null,
         price: stats?.priceUsd ?? null,
         priceUsd: stats?.priceUsd ?? null,
         liquidity: stats?.liquidity?.usd ?? null,
+        ageAt: createdAt ?? stats?.updatedAt ?? null,
+        priceChange5m: stats?.priceChange?.m5 ?? null,
+        priceChange1h: stats?.priceChange?.h1 ?? null,
+        priceChange6h: stats?.priceChange?.h6 ?? null,
         priceChange24h: stats?.priceChange?.h24 ?? null,
         txCount24h: stats?.txns?.h24?.total ?? 0,
         volume24h: stats?.volume?.h24 ?? 0,
