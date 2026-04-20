@@ -10,7 +10,7 @@ const cors = require('cors');
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' })); // webhooks can be large (multi-tx batches)
+app.use(express.json({ limit: '1mb' })); // webhooks are now 'Raw' (smaller payloads)
 
 // Health check
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));

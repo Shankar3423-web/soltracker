@@ -27,7 +27,8 @@ router.post('/', verifyWebhookSecret, async (req, res) => {
     const payload = req.body;
     const heliusId = req.headers['x-helius-id'];
 
-    console.log(`[Webhook] Request received | Batch size: ${Array.isArray(payload) ? payload.length : 0} | Helius-Id: ${heliusId || 'none'}`);
+    const payloadSize = JSON.stringify(req.body).length;
+    console.log(`[Webhook] Request received | Size: ${(payloadSize / 1024).toFixed(2)}KB | Batch: ${Array.isArray(payload) ? payload.length : 0} | Helius-Id: ${heliusId || 'none'}`);
 
     if (!Array.isArray(payload) || payload.length === 0) {
         return res.status(200).json({ received: true, queued: 0 });

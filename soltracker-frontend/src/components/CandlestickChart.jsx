@@ -234,6 +234,13 @@ export default function CandlestickChart({ poolAddress, baseSymbol, quoteSymbol 
                 return;
             }
 
+            // Guard against out-of-order data which causes: "Cannot update oldest data"
+            const lastTime = latestCandleRef.current?.time;
+            if (lastTime != null && normalized.time < lastTime) {
+                // Ignore late-arriving data to prevent charting crash
+                return;
+            }
+
             candleSeriesRef.current.update({
                 time: normalized.time,
                 open: normalized.open,

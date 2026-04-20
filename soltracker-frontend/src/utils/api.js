@@ -50,10 +50,12 @@ function toNumber(value) {
 }
 
 function toTimestamp(value) {
-    if (!value) return null;
+    if (value == null) return null;
     if (typeof value === 'number') {
+        // Assume seconds if < 10^12, else milliseconds
         return value > 1e12 ? value : value * 1000;
     }
+    // Handle string or date objects
     const parsed = new Date(value).getTime();
     return Number.isFinite(parsed) ? parsed : null;
 }
