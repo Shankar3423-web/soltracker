@@ -19,7 +19,8 @@ async function run() {
                 pools, 
                 tokens,
                 users,
-                pool_candles
+                pool_candles,
+                webhook_ingest_queue
             RESTART IDENTITY CASCADE;
         `;
         

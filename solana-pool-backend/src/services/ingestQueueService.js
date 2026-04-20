@@ -1,18 +1,32 @@
 'use strict';
 
-const db = require('../config/db');
+const { Queue, Worker } = require('bullmq');
+const { connection, REDIS_PREFIX } = require('../config/redis');
 const { getTransaction } = require('./heliusService');
 const { decodeSwaps } = require('./decoderService');
 const { persistDecodedSwapEvent } = require('./marketDataService');
 const { broadcastNewSwap, broadcastCandleUpdate } = require('./socketService');
 
 const RPC_DELAY_MS = 120;
-const RETRY_DELAY_MS = 2_000;
 const MAX_RETRIES = 5;
-const STALE_PROCESSING_MS = 10 * 60 * 1000;
-const HEARTBEAT_MS = 15 * 1000;
+
+// Initialize BullMQ Queue
+const QUEUE_NAME = 'webhook_ingest_queue';
+const ingestQueue = new Queue(QUEUE_NAME, {
+    connection,
+    defaultJobOptions: {
+        attempts: MAX_RETRIES,
+        backoff: {
+            type: 'exponential',
+            delay: 2000,
+        },
+        removeOnComplete: true,
+        removeOnFail: false,
+    },
+    prefix: REDIS_PREFIX,
+});
+
 let workerStarted = false;
-let workerRunning = false;
 
 function getAllowedPools() {
     const raw = process.env.POOL_ALLOWLIST;
@@ -24,10 +38,12 @@ function getAllowedPools() {
                 .filter(Boolean)
         );
     }
-
     return new Set();
 }
 
+/**
+ * Enqueue signatures into Redis/BullMQ.
+ */
 async function enqueueWebhookSignatures(signatures = []) {
     const unique = [...new Set(
         signatures
@@ -40,151 +56,33 @@ async function enqueueWebhookSignatures(signatures = []) {
         return { queued: 0, queueDepth: await getQueueDepth() };
     }
 
-    const result = await db.query(
-        `
-        INSERT INTO webhook_ingest_queue (
-            signature,
-            status,
-            attempts,
-            next_attempt_at,
-            last_seen_at,
-            updated_at
-        )
-        SELECT
-            signature,
-            'pending',
-            0,
-            NOW(),
-            NOW(),
-            NOW()
-        FROM unnest($1::text[]) AS signature
-        ON CONFLICT (signature) DO UPDATE SET
-            last_seen_at = NOW(),
-            updated_at = NOW(),
-            status = CASE
-                WHEN webhook_ingest_queue.status = 'completed' THEN webhook_ingest_queue.status
-                ELSE 'pending'
-            END,
-            next_attempt_at = CASE
-                WHEN webhook_ingest_queue.status = 'completed' THEN webhook_ingest_queue.next_attempt_at
-                ELSE NOW()
-            END
-        RETURNING signature, status
-        `,
-        [unique]
-    );
+    // Add jobs to BullMQ
+    const jobs = unique.map(sig => ({
+        name: `ingest-${sig.slice(0, 8)}`,
+        data: { signature: sig }
+    }));
 
-    void drainPersistedQueue();
+    await ingestQueue.addBulk(jobs);
 
     return {
-        queued: result.rows.filter((row) => row.status !== 'completed').length,
+        queued: unique.length,
         queueDepth: await getQueueDepth(),
     };
 }
 
 async function getQueueDepth() {
-    const result = await db.query(
-        `
-        SELECT COUNT(*)::INT AS count
-        FROM webhook_ingest_queue
-        WHERE status IN ('pending', 'processing')
-        `
-    );
-
-    return result.rows[0]?.count ?? 0;
-}
-
-async function recoverStaleJobs() {
-    await db.query(
-        `
-        UPDATE webhook_ingest_queue
-        SET
-            status = 'pending',
-            updated_at = NOW(),
-            next_attempt_at = NOW()
-        WHERE status = 'processing'
-          AND updated_at < NOW() - ($1::TEXT)::INTERVAL
-        `,
-        [`${STALE_PROCESSING_MS} milliseconds`]
-    );
-}
-
-async function claimNextJob() {
-    const result = await db.query(
-        `
-        WITH next_job AS (
-            SELECT signature
-            FROM webhook_ingest_queue
-            WHERE status = 'pending'
-              AND next_attempt_at <= NOW()
-            ORDER BY next_attempt_at ASC, created_at ASC
-            LIMIT 1
-            FOR UPDATE SKIP LOCKED
-        )
-        UPDATE webhook_ingest_queue queue
-        SET
-            status = 'processing',
-            attempts = queue.attempts + 1,
-            updated_at = NOW(),
-            last_error = NULL
-        FROM next_job
-        WHERE queue.signature = next_job.signature
-        RETURNING queue.signature, queue.attempts
-        `
-    );
-
-    return result.rows[0] ?? null;
-}
-
-async function markCompleted(signature) {
-    await db.query(
-        `
-        UPDATE webhook_ingest_queue
-        SET
-            status = 'completed',
-            updated_at = NOW(),
-            next_attempt_at = NOW(),
-            last_error = NULL
-        WHERE signature = $1
-        `,
-        [signature]
-    );
-}
-
-async function markFailed(signature, attempts, errorMessage) {
-    const exhausted = attempts >= MAX_RETRIES;
-    const delayMs = RETRY_DELAY_MS * Math.max(attempts, 1);
-    const nextAttemptAt = exhausted ? new Date() : new Date(Date.now() + delayMs);
-
-    await db.query(
-        `
-        UPDATE webhook_ingest_queue
-        SET
-            status = $2::VARCHAR,
-            updated_at = NOW(),
-            next_attempt_at = $3,
-            last_error = $4
-        WHERE signature = $1
-        `,
-        [
-            signature,
-            exhausted ? 'failed' : 'pending',
-            nextAttemptAt,
-            errorMessage?.slice(0, 1000) ?? 'Unknown ingest error',
-        ]
-    );
-
-    if (exhausted) {
-        console.error(
-            `[IngestQueue] Permanent failure for ${signature.slice(0, 20)}... after ${attempts} attempts: ${errorMessage}`
-        );
-    } else {
-        console.warn(
-            `[IngestQueue] Retry ${attempts}/${MAX_RETRIES} scheduled for ${signature.slice(0, 20)}...: ${errorMessage}`
-        );
+    try {
+        const counts = await ingestQueue.getJobCounts('wait', 'active', 'delayed');
+        return (counts.wait || 0) + (counts.active || 0) + (counts.delayed || 0);
+    } catch (err) {
+        return 0;
     }
 }
 
+/**
+ * Core processing logic - DO NOT TOUCH (as per user request).
+ * This remains the bridge between ingestion and data persistence.
+ */
 async function processTransaction(signature) {
     const tx = await getTransaction(signature);
 
@@ -249,45 +147,35 @@ async function processTransaction(signature) {
     }
 }
 
-async function drainPersistedQueue() {
-    if (workerRunning) return;
-    workerRunning = true;
-
-    try {
-        while (true) {
-            const job = await claimNextJob();
-            if (!job) break;
-
-            try {
-                await processTransaction(job.signature);
-                await markCompleted(job.signature);
-            } catch (err) {
-                await markFailed(job.signature, job.attempts, err.message);
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, RPC_DELAY_MS));
-        }
-    } finally {
-        workerRunning = false;
-    }
-}
-
+/**
+ * Start the BullMQ Worker.
+ * Replaces startIngestWorker and the old polling logic.
+ */
 function startIngestWorker() {
     if (workerStarted) return;
     workerStarted = true;
 
-    void recoverStaleJobs()
-        .then(() => drainPersistedQueue())
-        .catch((err) => console.error('[IngestQueue] Startup recovery failed:', err.message));
+    const worker = new Worker(QUEUE_NAME, async (job) => {
+        const { signature } = job.data;
+        try {
+            await processTransaction(signature);
+            // Throttle slightly to respect RPC limits
+            await new Promise((resolve) => setTimeout(resolve, RPC_DELAY_MS));
+        } catch (err) {
+            console.error(`[IngestQueue] Job failed for tx ${signature.slice(0, 12)}:`, err.message);
+            throw err; // Allow BullMQ to handle retries
+        }
+    }, {
+        connection,
+        prefix: REDIS_PREFIX,
+        concurrency: 1, // Start with single concurrency to match previous behavior
+    });
 
-    setInterval(() => {
-        void recoverStaleJobs().catch((err) => {
-            console.error('[IngestQueue] Stale job recovery failed:', err.message);
-        });
-        void drainPersistedQueue().catch((err) => {
-            console.error('[IngestQueue] Queue drain failed:', err.message);
-        });
-    }, HEARTBEAT_MS);
+    worker.on('error', (err) => {
+        console.error('[IngestQueue] Redis Worker error:', err.message);
+    });
+
+    console.log('[IngestQueue] Redis Worker started successfully');
 }
 
 module.exports = {
