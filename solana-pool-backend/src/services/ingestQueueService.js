@@ -11,10 +11,6 @@ const RETRY_DELAY_MS = 2_000;
 const MAX_RETRIES = 5;
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
 const HEARTBEAT_MS = 15 * 1000;
-const TEST_POOL_ALLOWLIST = new Set([
-    'dx5wfoszxvnd6xyyajajuqrglqdaurtvh2jmhz6ejdnt',
-]);
-
 let workerStarted = false;
 let workerRunning = false;
 
@@ -29,7 +25,7 @@ function getAllowedPools() {
         );
     }
 
-    return TEST_POOL_ALLOWLIST;
+    return new Set();
 }
 
 async function enqueueWebhookSignatures(signatures = []) {
