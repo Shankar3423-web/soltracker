@@ -4,6 +4,20 @@ const app = require('./src/app');
 const server = http.createServer(app);
 const { initSocket } = require('./src/services/socketService');
 
+// ─── Process-level crash guards ───────────────────────────────────────────────
+// These prevent a single failed async operation from killing the entire server.
+// Without these, ANY unhandled promise rejection (e.g. a flaky RPC call or a
+// DB timeout inside BullMQ worker) will crash Node in production.
+process.on('uncaughtException', (err) => {
+    console.error('[FATAL] uncaughtException — server kept alive:', err.message, err.stack);
+});
+
+process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    console.error('[FATAL] unhandledRejection — server kept alive:', msg);
+});
+// ──────────────────────────────────────────────────────────────────────────────
+
 // Initialize real-time WebSocket layer
 initSocket(server);
 

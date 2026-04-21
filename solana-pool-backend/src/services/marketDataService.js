@@ -50,7 +50,6 @@ async function persistDecodedSwapEvent(event, wallet, options = {}) {
     });
 
     let candleUpdates = [];
-    let stats = null;
 
     if (inserted) {
         candleUpdates = await processSwapForCandles({
@@ -64,7 +63,17 @@ async function persistDecodedSwapEvent(event, wallet, options = {}) {
             swapSide: event.swapSide,
         });
 
-        stats = await aggregatePool(event.poolAddress);
+        // ── Decouple aggregation from the hot swap path ──────────────────────
+        // aggregatePool runs a 5000-row SQL query + RPC call per swap event.
+        // Awaiting it in-band blocks the BullMQ worker on every transaction,
+        // stacking up concurrent heavy DB queries under burst load and
+        // exhausting memory / connection pool → server crash.
+        // Fire it async so the worker job completes fast.
+        setImmediate(() => {
+            aggregatePool(event.poolAddress).catch((err) => {
+                console.warn('[MarketData] Background aggregatePool failed:', err.message);
+            });
+        });
     }
 
     if (enrichMetadata) {
@@ -85,7 +94,6 @@ async function persistDecodedSwapEvent(event, wallet, options = {}) {
         blockTime,
         pricing,
         candleUpdates,
-        stats,
     };
 }
 
