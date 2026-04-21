@@ -1,23 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './styles/global.css';
 import './App.css';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import PoolList from './components/PoolList';
 import PoolDetail from './components/PoolDetail';
+import WatchlistPanel from './components/WatchlistPanel';
+import { useWatchlistStore } from './hooks/useWatchlistStore';
+import { useWatchlistSockets } from './hooks/useWatchlistSockets';
 
 export default function App() {
+    const [view, setView] = useState('market'); // 'market' or 'watchlist'
     const [activeDex, setActiveDex] = useState(null);
     const [selectedPool, setSelectedPool] = useState(null);
 
+    const { fetchWatchlists } = useWatchlistStore();
+    useWatchlistSockets();
+
+    useEffect(() => {
+        fetchWatchlists();
+    }, [fetchWatchlists]);
+
     function handleDexChange(key) {
         setActiveDex(key);
+        setSelectedPool(null);
+        setView('market');
+    }
+
+    function handleViewWatchlist() {
+        setView('watchlist');
         setSelectedPool(null);
     }
 
     return (
         <div className="app-shell">
-            <Sidebar onSelectSolana={() => handleDexChange(null)} />
+            <Sidebar 
+                onSelectSolana={() => handleDexChange(null)} 
+                onSelectWatchlist={handleViewWatchlist}
+            />
             <div className="app-main">
                 <TopBar
                     activeDex={activeDex}
@@ -31,6 +51,10 @@ export default function App() {
                                 pool={selectedPool}
                                 onClose={() => setSelectedPool(null)}
                             />
+                        </section>
+                    ) : view === 'watchlist' ? (
+                        <section className="app-list-panel">
+                            <WatchlistPanel onSelectPool={setSelectedPool} />
                         </section>
                     ) : (
                         <section className="app-list-panel">

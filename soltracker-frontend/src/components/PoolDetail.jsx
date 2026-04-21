@@ -16,6 +16,7 @@ import {
     short,
     timeAgo,
 } from '../utils/api';
+import WatchlistButton from './WatchlistButton';
 import './PoolDetail.css';
 
 const WINDOWS = [
@@ -187,6 +188,7 @@ export default function PoolDetail({ pool, onClose }) {
                                 >
                                     {currentPool.dexName || 'Unknown DEX'}
                                 </em>
+                                <WatchlistButton pool={currentPool} />
                             </div>
                             <div className="pd-meta-row">
                                 <span>Solana</span>

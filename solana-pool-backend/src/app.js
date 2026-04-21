@@ -4,6 +4,7 @@ const decodeRoute = require('./routes/decodeRoute');
 const poolsRoute = require('./routes/poolsRoute');
 const webhookRoute = require('./routes/webhookRoute');
 const authRoute = require('./routes/authRoute');
+const watchlistRoute = require('./routes/watchlistRoute');
 
 const cors = require('cors');
 
@@ -26,6 +27,9 @@ app.use('/pools', poolsRoute);
 
 // Firebase Google auth — verifies ID token and upserts user in PostgreSQL
 app.use('/auth', authRoute);
+
+// Watchlist API — managed lists, batch hydration, and manual reordering
+app.use('/watchlists', watchlistRoute);
 
 // Global error handler
 app.use((err, _req, res, _next) => {

@@ -150,6 +150,21 @@
     font-family: var(--font-mono);
 }
 
+.row-rank-box {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pl-row .wl-btn {
+    opacity: 0.2;
+}
+
+.pl-row:hover .wl-btn,
+.pl-row .wl-btn.active {
+    opacity: 1;
+}
+
 .muted {
     color: #8c98b1;
 }

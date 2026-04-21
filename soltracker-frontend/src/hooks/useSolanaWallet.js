@@ -41,6 +41,7 @@ export function useSolanaWallet() {
 
         if (connected && walletAddress) {
             localStorage.setItem('wallet_disconnected', 'false');
+            localStorage.setItem('wallet_address', walletAddress);
             fetchBalance();
             syncWithBackend();
         }

@@ -1,0 +1,30 @@
+.wl-btn {
+    background: transparent;
+    border: none;
+    color: #8a91ab;
+    padding: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-radius: 6px;
+}
+
+.wl-btn:hover {
+    color: #ffd66b;
+    background: rgba(255, 214, 107, 0.1);
+}
+
+.wl-btn.active {
+    color: #ffd66b;
+}
+
+.wl-btn svg {
+    filter: drop-shadow(0 0 4px rgba(255, 214, 107, 0));
+    transition: filter 0.2s ease;
+}
+
+.wl-btn.active svg {
+    filter: drop-shadow(0 0 8px rgba(255, 214, 107, 0.4));
+}

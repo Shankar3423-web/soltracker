@@ -11,6 +11,7 @@ import {
     getDexSources,
     short,
 } from '../utils/api';
+import WatchlistButton from './WatchlistButton';
 import './PoolList.css';
 
 const DEFAULT_SORT = { col: 'volume24h', dir: 'desc' };
@@ -218,7 +219,12 @@ function PoolRow({ pool, rank, selected, onClick }) {
 
     return (
         <tr className={`pl-row${selected ? ' selected' : ''}`} onClick={onClick}>
-            <td><span className="rank">#{rank}</span></td>
+            <td>
+                <div className="row-rank-box">
+                    <WatchlistButton pool={pool} />
+                    <span className="rank">#{rank}</span>
+                </div>
+            </td>
 
             <td>
                 <div className="tc">
