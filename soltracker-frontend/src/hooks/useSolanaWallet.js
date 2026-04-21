@@ -6,6 +6,7 @@ import { BASE } from '../utils/api';
 export function useSolanaWallet() {
     const { publicKey, connected } = useWallet();
     const [solBalance, setSolBalance] = useState(0);
+    const [username, setUsername] = useState(null);
     const walletAddress = publicKey?.toString();
 
     useEffect(() => {
@@ -25,7 +26,7 @@ export function useSolanaWallet() {
             if (!walletAddress) return;
 
             try {
-                await fetch(`${BASE}/auth/wallet`, {
+                const response = await fetch(`${BASE}/auth/wallet`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -34,6 +35,16 @@ export function useSolanaWallet() {
                         wallet_address: walletAddress,
                     }),
                 });
+                
+                const data = await response.json();
+                if (data.success) {
+                    // Fetch additional info (like username)
+                    const userRes = await fetch(`${BASE}/auth/wallet/${walletAddress}`);
+                    const userData = await userRes.json();
+                    if (userData.username) {
+                        setUsername(userData.username);
+                    }
+                }
             } catch (err) {
                 console.error('Error syncing with backend:', err);
             }
@@ -44,6 +55,9 @@ export function useSolanaWallet() {
             localStorage.setItem('wallet_address', walletAddress);
             fetchBalance();
             syncWithBackend();
+        } else {
+            setUsername(null);
+            setSolBalance(0);
         }
     }, [connected, walletAddress]);
 
@@ -51,5 +65,6 @@ export function useSolanaWallet() {
         walletAddress,
         connected,
         solBalance,
+        username,
     };
 }

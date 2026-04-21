@@ -148,18 +148,27 @@ CREATE TABLE IF NOT EXISTS pool_candles (
     PRIMARY KEY (pool_address, resolution, time_bucket)
 );
 
--- 7. Users
+-- 7. Users (Social/Google Profiles)
 CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    firebase_uid TEXT UNIQUE,
+    firebase_uid TEXT PRIMARY KEY, -- UID from Firebase
     email TEXT,
     name TEXT,
     picture TEXT,
-    wallet_address TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+    wallet_address TEXT UNIQUE,   -- Optional link to a Solana wallet
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8. Webhook Ingest Queue
+-- 8. Auth Nonces (Wallet Users Lightweight Store)
+CREATE TABLE IF NOT EXISTS auth_nonces (
+    wallet_address TEXT PRIMARY KEY,
+    nonce TEXT NOT NULL,           -- Used for signature verification
+    username TEXT,                 -- Custom display name for wallet users
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 9. Webhook Ingest Queue
 CREATE TABLE IF NOT EXISTS webhook_ingest_queue (
     signature VARCHAR(128) PRIMARY KEY,
     status VARCHAR(16) NOT NULL DEFAULT 'pending',

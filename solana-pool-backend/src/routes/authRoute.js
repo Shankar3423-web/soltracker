@@ -31,11 +31,16 @@ router.post('/google', async (req, res) => {
     try {
         const { uid, email, name, picture } = decoded;
 
-        // Upsert user into PostgreSQL (ignore if already exists)
+        // Upsert user into PostgreSQL with refreshed data
         await pool.query(
-            `INSERT INTO users (firebase_uid, email, name, picture)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (firebase_uid) DO NOTHING`,
+            `INSERT INTO users (firebase_uid, email, name, picture, updated_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT (firebase_uid) 
+             DO UPDATE SET 
+                email = EXCLUDED.email,
+                name = EXCLUDED.name,
+                picture = EXCLUDED.picture,
+                updated_at = NOW()`,
             [uid, email, name, picture]
         );
 
@@ -48,7 +53,8 @@ router.post('/google', async (req, res) => {
 
 /**
  * POST /auth/wallet
- * Receives a wallet address from the frontend and upserts the user in PostgreSQL.
+ * Receives a wallet address from the frontend and upserts the user in auth_nonces.
+ * Returns a synthetic UID: wallet:<address>
  */
 router.post('/wallet', async (req, res) => {
     try {
@@ -58,21 +64,80 @@ router.post('/wallet', async (req, res) => {
             return res.status(400).json({ error: 'Missing wallet address' });
         }
 
-        // Upsert user into PostgreSQL (ignore if already exists)
-        // NOTE: This requires a UNIQUE constraint on wallet_address column
+        // Generate a synthetic UID
+        const syntheticUid = `wallet:${wallet_address.toLowerCase()}`;
+
+        // Upsert into auth_nonces (Lightweight store for wallet users)
+        // We generate a simple nonce for now (e.g., date + address hash)
+        const nonce = Buffer.from(`${Date.now()}:${wallet_address}`).toString('base64');
+        const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7); // 1 week
+
         await pool.query(
-            `INSERT INTO users (wallet_address)
-             VALUES ($1)
-             ON CONFLICT (wallet_address) DO NOTHING`,
-            [wallet_address]
+            `INSERT INTO auth_nonces (wallet_address, nonce, expires_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (wallet_address) 
+             DO UPDATE SET 
+                nonce = EXCLUDED.nonce,
+                expires_at = EXCLUDED.expires_at`,
+            [wallet_address, nonce, expiresAt]
         );
 
-        console.log(`[AuthRoute] Wallet synced: ${wallet_address}`);
-        return res.json({ success: true });
+        console.log(`[AuthRoute] Wallet synced: ${wallet_address} -> ${syntheticUid}`);
+        return res.json({ 
+            success: true, 
+            uid: syntheticUid,
+            walletAddress: wallet_address 
+        });
     } catch (err) {
         console.error('[AuthRoute] Wallet Auth Error:', err.message);
-        console.error('[AuthRoute] Stack:', err.stack);
         return res.status(500).json({ error: 'Failed', details: err.message });
+    }
+});
+
+/**
+ * PUT /auth/wallet/username
+ * Updates the custom display name for a wallet user.
+ */
+router.put('/wallet/username', async (req, res) => {
+    try {
+        const { wallet_address, username } = req.body;
+
+        if (!wallet_address || !username) {
+            return res.status(400).json({ error: 'Missing address or username' });
+        }
+
+        await pool.query(
+            `UPDATE auth_nonces SET username = $1 WHERE wallet_address = $2`,
+            [username, wallet_address]
+        );
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('[AuthRoute] Username Update Error:', err.message);
+        return res.status(500).json({ error: 'Failed to update username' });
+    }
+});
+
+/**
+ * GET /auth/wallet/:address
+ * Fetches the user data (like username) for a specific wallet.
+ */
+router.get('/wallet/:address', async (req, res) => {
+    try {
+        const { address } = req.params;
+        const result = await pool.query(
+            'SELECT wallet_address, username, created_at FROM auth_nonces WHERE wallet_address = $1',
+            [address]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        return res.json(result.rows[0]);
+    } catch (err) {
+        console.error('[AuthRoute] GET wallet error:', err.message);
+        return res.status(500).json({ error: 'Failed to fetch user' });
     }
 });
 

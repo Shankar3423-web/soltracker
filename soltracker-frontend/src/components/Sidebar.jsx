@@ -10,7 +10,7 @@ import './Sidebar.css';
 export default function Sidebar({ onSelectSolana, onSelectWatchlist }) {
     const [showLogin, setShowLogin] = useState(false);
     const [user, setUser] = useState(null);
-    const { walletAddress, connected, solBalance } = useSolanaWallet();
+    const { walletAddress, connected, solBalance, username } = useSolanaWallet();
     const { disconnect } = useWallet();
 
     useEffect(() => {
@@ -95,7 +95,7 @@ export default function Sidebar({ onSelectSolana, onSelectWatchlist }) {
                         <div className="sb-user-info">
                             <div className="sb-user-text">
                                 <span className="sb-user-name">
-                                    {walletAddress.slice(0, 4)}...{walletAddress.slice(-4)}
+                                    {username || `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`}
                                 </span>
                                 <span className="sb-user-email accent">
                                     {solBalance.toFixed(3)} SOL
