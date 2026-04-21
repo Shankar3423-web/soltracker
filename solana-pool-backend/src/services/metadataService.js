@@ -22,33 +22,9 @@ const { upsertToken, findToken } = require('../repositories/tokenRepository');
 // On restart, DB already has the data so the first DB check short-circuits.
 const _fetched = new Set();
 
-// Jupiter token list (cached in memory, fetched once per process)
-let _jupiterList = null;
-let _jupiterFetched = false;
-
-/**
- * Load (or return cached) Jupiter all-token list.
- * Returns a Map<mint → { symbol, name, decimals, logoURI }>
- * Returns empty Map on failure — never throws.
- */
-async function getJupiterList() {
-    if (_jupiterFetched) return _jupiterList ?? new Map();
-    _jupiterFetched = true;
-    try {
-        const res = await axios.get('https://token.jup.ag/all', {
-            timeout: 10000,
-            proxy: false,
-        });
-        const list = res.data;
-        if (!Array.isArray(list)) return new Map();
-        _jupiterList = new Map(list.map(t => [t.address, t]));
-        console.log(`[Metadata] Jupiter list loaded: ${_jupiterList.size} tokens`);
-        return _jupiterList;
-    } catch (err) {
-        console.warn('[Metadata] Jupiter list fetch failed:', err.message);
-        return new Map();
-    }
-}
+// NOTE: Jupiter all-token list (~500K tokens, 200-300MB RAM) is intentionally
+// NOT loaded into memory to stay within Render's 512MB limit.
+// Token lookup falls through: DB cache -> Helius DAS -> fallback insert.
 
 /**
  * Fetch metadata for a single mint via Helius DAS getAsset.
@@ -113,23 +89,9 @@ async function ensureTokenExists(mint) {
 
         let meta = null;
 
-        // Try Jupiter (fast, cached in memory after first call)
-        const jupList = await getJupiterList();
-        const jupToken = jupList.get(mint);
-        if (jupToken) {
-            meta = {
-                symbol: jupToken.symbol ?? null,
-                name: jupToken.name ?? null,
-                decimals: jupToken.decimals ?? null,
-                logoUrl: jupToken.logoURI ?? null,
-            };
-        }
-
-        // Fallback to Helius DAS if Jupiter didn't have it
-        if (!meta || !meta.symbol) {
-            const heliusMeta = await fetchFromHelius(mint);
-            if (heliusMeta) meta = heliusMeta;
-        }
+        // Fetch from Helius DAS (Jupiter list removed to save 200-300MB RAM)
+        const heliusMeta = await fetchFromHelius(mint);
+        if (heliusMeta) meta = heliusMeta;
 
         // Upsert whatever we found (even null fields — COALESCE keeps existing values)
         await upsertToken({
