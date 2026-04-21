@@ -11,6 +11,11 @@ const LIQUIDITY_RPC_BACKOFF_MS = 2 * 60_000;
 const LIQUIDITY_LOG_THROTTLE_MS = 60_000;
 const MIN_MEANINGFUL_LIQUIDITY_USD = 1;
 
+// Per-address backoff: skip addresses that repeatedly fail (aborted/timeout)
+// Key: ownerPubkey, Value: timestamp until which this address is skipped
+const addressFailureBackoff = new Map();
+const ADDRESS_FAILURE_BACKOFF_MS = 30 * 60_000; // 30 minutes
+
 function isLiquidityRateLimited() {
     return Date.now() < liquidityRpcBackoffUntil;
 }
@@ -19,6 +24,10 @@ async function getTokenAccountsByOwner(ownerPubkey) {
     const rpcUrl = process.env.HELIUS_RPC_URL;
     if (!rpcUrl) return [];
     if (isLiquidityRateLimited()) return [];
+
+    // Skip addresses that have recently failed with aborted/timeout
+    const backoffUntil = addressFailureBackoff.get(ownerPubkey);
+    if (backoffUntil && Date.now() < backoffUntil) return [];
 
     const tokenPrograms = [
         'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
@@ -63,6 +72,13 @@ async function getTokenAccountsByOwner(ownerPubkey) {
                     lastLiquidity429LogAt = Date.now();
                     console.warn('[Liquidity] Helius RPC rate limited liquidity refresh. Backing off for 2 minutes.');
                 }
+                return [];
+            }
+
+            // For aborted/timeout errors, back off this specific address for 30 minutes
+            if (err.code === 'ECONNABORTED' || err.message === 'aborted' || err.message?.includes('timeout')) {
+                addressFailureBackoff.set(ownerPubkey, Date.now() + ADDRESS_FAILURE_BACKOFF_MS);
+                console.warn(`[Liquidity] getTokenAccountsByOwner failed for ${ownerPubkey}: ${err.message} — skipping for 30 min`);
                 return [];
             }
 

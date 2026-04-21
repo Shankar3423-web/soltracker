@@ -135,7 +135,7 @@ async function aggregatePool(poolAddress) {
              FROM swaps
              WHERE pool_address = $1 AND block_time >= NOW() - INTERVAL '24 hours'
              ORDER BY block_time ASC NULLS LAST, event_index ASC, id ASC
-             LIMIT 50000`,
+             LIMIT 5000`,
             [poolAddress]
         );
 
