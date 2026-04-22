@@ -18,6 +18,15 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const failureCountMap = new Map(); // PoolAddress -> Count
 const cooldownMap = new Map();     // PoolAddress -> Expiry Timestamp
 
+function getMemoryLimitBytes(envName, fallbackMb) {
+    const mb = Number.parseInt(process.env[envName] || String(fallbackMb), 10);
+    return (Number.isFinite(mb) && mb > 0 ? mb : fallbackMb) * 1024 * 1024;
+}
+
+function isRssAboveLimit(envName, fallbackMb) {
+    return process.memoryUsage().rss > getMemoryLimitBytes(envName, fallbackMb);
+}
+
 function createMetricBucket() {
     return {
         txCount: 0,
@@ -270,11 +279,21 @@ async function aggregateAllPools() {
             return 0;
         }
 
+        if (isRssAboveLimit('AGGREGATION_RSS_LIMIT_MB', 330)) {
+            console.warn('[Aggregation] Memory Guard: Skipping run due to RSS pressure');
+            return 0;
+        }
+
         const pools = await db.query('SELECT pool_address FROM pools ORDER BY created_at ASC');
         let updated = 0;
         const now = Date.now();
 
         for (const row of pools.rows) {
+            if (isRssAboveLimit('AGGREGATION_RSS_LIMIT_MB', 330)) {
+                console.warn('[Aggregation] Memory Guard: Stopping run early due to RSS pressure');
+                break;
+            }
+
             const poolAddress = row.pool_address;
 
             // Circuit Breaker: Check cooldown

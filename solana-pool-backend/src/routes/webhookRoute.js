@@ -8,14 +8,25 @@ const {
     startIngestWorker,
 } = require('../services/ingestQueueService');
 
-startIngestWorker();
+const ENABLE_INGEST_WORKER = process.env.ENABLE_INGEST_WORKER !== 'false';
+
+if (ENABLE_INGEST_WORKER) {
+    startIngestWorker();
+} else {
+    console.log('[IngestQueue] Worker disabled by ENABLE_INGEST_WORKER=false');
+}
+
+function getMemoryLimitBytes(envName, fallbackMb) {
+    const mb = Number.parseInt(process.env[envName] || String(fallbackMb), 10);
+    return (Number.isFinite(mb) && mb > 0 ? mb : fallbackMb) * 1024 * 1024;
+}
 
 function checkMemoryPressure(req, res, next) {
-    const memory = process.memoryUsage().heapUsed;
-    const threshold = 360 * 1024 * 1024; // 360MB
+    const memory = process.memoryUsage().rss;
+    const threshold = getMemoryLimitBytes('WEBHOOK_RSS_LIMIT_MB', 330);
 
     if (memory > threshold) {
-        console.warn(`[MemoryGuard] Throttling webhook | Memory: ${(memory / 1024 / 1024).toFixed(2)}MB > 360MB`);
+        console.warn(`[MemoryGuard] Throttling webhook | RSS: ${(memory / 1024 / 1024).toFixed(2)}MB > ${(threshold / 1024 / 1024).toFixed(0)}MB`);
         return res.status(429).json({
             error: 'Too Many Requests',
             message: 'Server memory pressure, please retry later',

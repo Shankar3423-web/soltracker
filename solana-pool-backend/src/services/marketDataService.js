@@ -11,6 +11,11 @@ const { unixToDate } = require('../utils/helpers');
 // Throttle aggregation to once every 20 seconds per pool to prevent CPU/RAM spikes
 const lastAggregationMap = new Map();
 
+function getMemoryLimitBytes(envName, fallbackMb) {
+    const mb = Number.parseInt(process.env[envName] || String(fallbackMb), 10);
+    return (Number.isFinite(mb) && mb > 0 ? mb : fallbackMb) * 1024 * 1024;
+}
+
 async function persistDecodedSwapEvent(event, wallet, options = {}) {
     const {
         enrichMetadata = true,
@@ -85,6 +90,11 @@ async function persistDecodedSwapEvent(event, wallet, options = {}) {
 
             if (now - lastRun < 20_000) {
                 return; // Skip: too frequent
+            }
+
+            if (process.memoryUsage().rss > getMemoryLimitBytes('HOT_PATH_AGGREGATION_RSS_LIMIT_MB', 330)) {
+                console.warn('[MarketData] Skipping background aggregatePool due to RSS pressure');
+                return;
             }
 
             lastAggregationMap.set(poolAddr, now);

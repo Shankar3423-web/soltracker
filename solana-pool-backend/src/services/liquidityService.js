@@ -16,6 +16,15 @@ const MIN_MEANINGFUL_LIQUIDITY_USD = 1;
 const addressFailureBackoff = new Map();
 const ADDRESS_FAILURE_BACKOFF_MS = 30 * 60_000; // 30 minutes
 
+function getMemoryLimitBytes(envName, fallbackMb) {
+    const mb = Number.parseInt(process.env[envName] || String(fallbackMb), 10);
+    return (Number.isFinite(mb) && mb > 0 ? mb : fallbackMb) * 1024 * 1024;
+}
+
+function isRssAboveLimit(envName, fallbackMb) {
+    return process.memoryUsage().rss > getMemoryLimitBytes(envName, fallbackMb);
+}
+
 function isLiquidityRateLimited() {
     return Date.now() < liquidityRpcBackoffUntil;
 }
@@ -158,6 +167,11 @@ async function refreshAllLiquidity() {
     let updated = 0;
 
     try {
+        if (isRssAboveLimit('LIQUIDITY_RSS_LIMIT_MB', 330)) {
+            console.warn('[Liquidity] Memory Guard: Skipping refresh due to RSS pressure');
+            return 0;
+        }
+
         const result = await db.query(`
             SELECT
                 p.pool_address,
@@ -174,6 +188,11 @@ async function refreshAllLiquidity() {
         `);
 
         for (const row of result.rows) {
+            if (isRssAboveLimit('LIQUIDITY_RSS_LIMIT_MB', 330)) {
+                console.warn('[Liquidity] Memory Guard: Stopping refresh early due to RSS pressure');
+                break;
+            }
+
             if (isLiquidityRateLimited()) {
                 break;
             }

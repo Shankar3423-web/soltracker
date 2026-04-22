@@ -7,8 +7,8 @@ const { refreshAllLiquidity } = require('./liquidityService');
 
 let started = false;
 
-const ENABLE_AGGREGATION_JOBS = process.env.ENABLE_AGGREGATION_JOBS !== 'false';
-const ENABLE_LIQUIDITY_REFRESH = process.env.ENABLE_LIQUIDITY_REFRESH !== 'false';
+const ENABLE_AGGREGATION_JOBS = process.env.ENABLE_AGGREGATION_JOBS === 'true';
+const ENABLE_LIQUIDITY_REFRESH = process.env.ENABLE_LIQUIDITY_REFRESH === 'true';
 const ENABLE_KEEP_ALIVE = process.env.ENABLE_KEEP_ALIVE !== 'false';
 
 let isAggregating = false;
@@ -92,7 +92,11 @@ function startScheduler() {
     }
 
     startKeepAlive();
-    console.log('[Scheduler] Aggregation every 5min, liquidity every 10min');
+    if (ENABLE_AGGREGATION_JOBS || ENABLE_LIQUIDITY_REFRESH) {
+        console.log('[Scheduler] Aggregation every 5min, liquidity every 10min');
+    } else {
+        console.log('[Scheduler] Background aggregation/liquidity jobs are disabled');
+    }
 }
 
 module.exports = { startScheduler };

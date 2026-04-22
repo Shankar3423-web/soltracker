@@ -21,12 +21,17 @@ const ingestQueue = new Queue(QUEUE_NAME, {
             delay: 2000,
         },
         removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: 100,
     },
     prefix: REDIS_PREFIX,
 });
 
 let workerStarted = false;
+
+function getMemoryLimitBytes(envName, fallbackMb) {
+    const mb = Number.parseInt(process.env[envName] || String(fallbackMb), 10);
+    return (Number.isFinite(mb) && mb > 0 ? mb : fallbackMb) * 1024 * 1024;
+}
 
 function getAllowedPools() {
     const raw = process.env.POOL_ALLOWLIST;
@@ -159,11 +164,11 @@ function startIngestWorker() {
         const { signature } = job.data;
         
         // Backpressure: Check memory before starting
-        const memory = process.memoryUsage().heapUsed;
-        const threshold = 380 * 1024 * 1024; // 380MB soft limit for worker
+        const memory = process.memoryUsage().rss;
+        const threshold = getMemoryLimitBytes('WORKER_RSS_SOFT_LIMIT_MB', 330);
 
         if (memory > threshold) {
-            console.warn(`[IngestQueue] Backpressure: RAM is tight (${(memory / 1024 / 1024).toFixed(2)}MB). Delaying job for ${signature.slice(0, 8)}...`);
+            console.warn(`[IngestQueue] Backpressure: RSS is tight (${(memory / 1024 / 1024).toFixed(2)}MB). Delaying job for ${signature.slice(0, 8)}...`);
             // Delay the job by throwing an error that BullMQ will see and retry based on backoff
             // Or manually wait 5 seconds to give GC/API a chance to clear memory
             await new Promise((resolve) => setTimeout(resolve, 5000));

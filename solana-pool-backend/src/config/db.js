@@ -16,6 +16,11 @@ require('dotenv').config();
 
 const { Pool } = require('pg');
 
+const DB_POOL_MAX = Math.max(
+    1,
+    Number.parseInt(process.env.DB_POOL_MAX || '2', 10) || 2
+);
+
 let poolConfig;
 
 if (process.env.DATABASE_URL) {
@@ -40,7 +45,7 @@ const pool = new Pool({
     keepAlive: true,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
-    max: 10,
+    max: DB_POOL_MAX,
 });
 
 // Verify connectivity on startup
