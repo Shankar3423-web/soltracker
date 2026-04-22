@@ -157,6 +157,19 @@ function startIngestWorker() {
 
     const worker = new Worker(QUEUE_NAME, async (job) => {
         const { signature } = job.data;
+        
+        // Backpressure: Check memory before starting
+        const memory = process.memoryUsage().heapUsed;
+        const threshold = 380 * 1024 * 1024; // 380MB soft limit for worker
+
+        if (memory > threshold) {
+            console.warn(`[IngestQueue] Backpressure: RAM is tight (${(memory / 1024 / 1024).toFixed(2)}MB). Delaying job for ${signature.slice(0, 8)}...`);
+            // Delay the job by throwing an error that BullMQ will see and retry based on backoff
+            // Or manually wait 5 seconds to give GC/API a chance to clear memory
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            throw new Error('Memory threshold exceeded, pushing back for retry');
+        }
+
         try {
             await processTransaction(signature);
             // Throttle slightly to respect RPC limits

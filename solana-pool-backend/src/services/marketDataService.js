@@ -8,6 +8,9 @@ const { aggregatePool } = require('./aggregationService');
 const { ensureTokenExists, enrichPoolSymbols } = require('./metadataService');
 const { unixToDate } = require('../utils/helpers');
 
+// Throttle aggregation to once every 20 seconds per pool to prevent CPU/RAM spikes
+const lastAggregationMap = new Map();
+
 async function persistDecodedSwapEvent(event, wallet, options = {}) {
     const {
         enrichMetadata = true,
@@ -69,8 +72,24 @@ async function persistDecodedSwapEvent(event, wallet, options = {}) {
         // stacking up concurrent heavy DB queries under burst load and
         // exhausting memory / connection pool → server crash.
         // Fire it async so the worker job completes fast.
+        // ── Decouple aggregation from the hot swap path ──────────────────────
+        // aggregatePool runs a 5000-row SQL query + RPC call per swap event.
+        // Awaiting it in-band blocks the BullMQ worker on every transaction,
+        // stacking up concurrent heavy DB queries under burst load and
+        // exhausting memory / connection pool → server crash.
+        // We throttle this to once every 20 seconds per pool to maintain stability.
         setImmediate(() => {
-            aggregatePool(event.poolAddress).catch((err) => {
+            const poolAddr = event.poolAddress;
+            const now = Date.now();
+            const lastRun = lastAggregationMap.get(poolAddr) || 0;
+
+            if (now - lastRun < 20_000) {
+                return; // Skip: too frequent
+            }
+
+            lastAggregationMap.set(poolAddr, now);
+
+            aggregatePool(poolAddr).catch((err) => {
                 console.warn('[MarketData] Background aggregatePool failed:', err.message);
             });
         });

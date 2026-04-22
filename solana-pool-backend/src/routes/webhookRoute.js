@@ -10,6 +10,21 @@ const {
 
 startIngestWorker();
 
+function checkMemoryPressure(req, res, next) {
+    const memory = process.memoryUsage().heapUsed;
+    const threshold = 360 * 1024 * 1024; // 360MB
+
+    if (memory > threshold) {
+        console.warn(`[MemoryGuard] Throttling webhook | Memory: ${(memory / 1024 / 1024).toFixed(2)}MB > 360MB`);
+        return res.status(429).json({
+            error: 'Too Many Requests',
+            message: 'Server memory pressure, please retry later',
+            retryAfter: 5
+        });
+    }
+    next();
+}
+
 function verifyWebhookSecret(req, res, next) {
     const secret = process.env.WEBHOOK_SECRET;
     if (!secret) return next();
@@ -23,7 +38,7 @@ function verifyWebhookSecret(req, res, next) {
     next();
 }
 
-router.post('/', verifyWebhookSecret, async (req, res) => {
+router.post('/', checkMemoryPressure, verifyWebhookSecret, async (req, res) => {
     const payload = req.body;
     const heliusId = req.headers['x-helius-id'];
 

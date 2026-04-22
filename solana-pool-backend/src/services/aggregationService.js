@@ -12,6 +12,12 @@ const WINDOWS = {
     '24h': 24 * 60 * 60 * 1000,
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Circuit Breaker Maps
+const failureCountMap = new Map(); // PoolAddress -> Count
+const cooldownMap = new Map();     // PoolAddress -> Expiry Timestamp
+
 function createMetricBucket() {
     return {
         txCount: 0,
@@ -255,12 +261,47 @@ async function aggregatePool(poolAddress) {
 
 async function aggregateAllPools() {
     try {
+        // CPU Guard: Check event loop lag
+        const start = Date.now();
+        await new Promise(resolve => setImmediate(resolve));
+        const lag = Date.now() - start;
+        if (lag > 200) {
+            console.warn(`[Aggregation] CPU Guard: Skipping run due to heavy lag (${lag}ms)`);
+            return 0;
+        }
+
         const pools = await db.query('SELECT pool_address FROM pools ORDER BY created_at ASC');
         let updated = 0;
+        const now = Date.now();
 
         for (const row of pools.rows) {
-            const stats = await aggregatePool(row.pool_address);
-            if (stats) updated++;
+            const poolAddress = row.pool_address;
+
+            // Circuit Breaker: Check cooldown
+            const cooldownExpiry = cooldownMap.get(poolAddress);
+            if (cooldownExpiry && now < cooldownExpiry) {
+                continue;
+            }
+
+            const stats = await aggregatePool(poolAddress);
+            
+            if (stats) {
+                updated++;
+                failureCountMap.delete(poolAddress); // Reset on success
+            } else {
+                // Circuit Breaker: Increment failure count
+                const failCount = (failureCountMap.get(poolAddress) || 0) + 1;
+                failureCountMap.set(poolAddress, failCount);
+                
+                if (failCount >= 3) {
+                    console.warn(`[Aggregation] Circuit Breaker: Cooling down pool ${poolAddress.slice(0, 8)} for 15m`);
+                    cooldownMap.set(poolAddress, now + 15 * 60 * 1000);
+                    failureCountMap.delete(poolAddress);
+                }
+            }
+
+            // Pacing: 500ms breathing room for GC
+            await sleep(500);
         }
 
         console.log(`[Aggregation] Updated stats for ${updated} pool(s).`);

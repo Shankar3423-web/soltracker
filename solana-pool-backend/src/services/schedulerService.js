@@ -11,6 +11,9 @@ const ENABLE_AGGREGATION_JOBS = process.env.ENABLE_AGGREGATION_JOBS !== 'false';
 const ENABLE_LIQUIDITY_REFRESH = process.env.ENABLE_LIQUIDITY_REFRESH !== 'false';
 const ENABLE_KEEP_ALIVE = process.env.ENABLE_KEEP_ALIVE !== 'false';
 
+let isAggregating = false;
+let isRefreshing = false;
+
 function startKeepAlive() {
     if (!ENABLE_KEEP_ALIVE) {
         console.log('[KeepAlive] Disabled by ENABLE_KEEP_ALIVE=false');
@@ -45,25 +48,45 @@ function startScheduler() {
     console.log('[Scheduler] Starting background jobs...');
 
     if (ENABLE_AGGREGATION_JOBS) {
-        setTimeout(() => {
-            aggregateAllPools().catch(() => { });
-        }, 10_000);
+        const runAggregation = async () => {
+            if (isAggregating) {
+                console.log('[Scheduler] Skip: Aggregation run already in progress');
+                return;
+            }
+            isAggregating = true;
+            try {
+                await aggregateAllPools();
+            } catch (err) {
+                console.error('[Scheduler] Aggregation error:', err.message);
+            } finally {
+                isAggregating = false;
+            }
+        };
 
-        setInterval(() => {
-            aggregateAllPools().catch(() => { });
-        }, 5 * 60_000);
+        setTimeout(runAggregation, 10_000);
+        setInterval(runAggregation, 5 * 60_000);
     } else {
         console.log('[Scheduler] Aggregation jobs disabled by ENABLE_AGGREGATION_JOBS=false');
     }
 
     if (ENABLE_LIQUIDITY_REFRESH) {
-        setTimeout(() => {
-            refreshAllLiquidity().catch(() => { });
-        }, 30_000);
+        const runLiquidity = async () => {
+            if (isRefreshing) {
+                console.log('[Scheduler] Skip: Liquidity refresh already in progress');
+                return;
+            }
+            isRefreshing = true;
+            try {
+                await refreshAllLiquidity();
+            } catch (err) {
+                console.error('[Scheduler] Liquidity refresh error:', err.message);
+            } finally {
+                isRefreshing = false;
+            }
+        };
 
-        setInterval(() => {
-            refreshAllLiquidity().catch(() => { });
-        }, 10 * 60_000);
+        setTimeout(runLiquidity, 30_000);
+        setInterval(runLiquidity, 10 * 60_000);
     } else {
         console.log('[Scheduler] Liquidity refresh disabled by ENABLE_LIQUIDITY_REFRESH=false');
     }
