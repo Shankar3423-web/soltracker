@@ -1,9 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
-import { VersionedTransaction, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import {
+    VersionedTransaction,
+    LAMPORTS_PER_SOL,
+    PublicKey,
+} from '@solana/web3.js';
 import { getJupiterQuote, getJupiterSwapTransaction } from '../services/jupiterService';
-import { logTradePending, finalizeTradeLog, fmtNum } from '../utils/api';
+import {
+    logTradePending,
+    finalizeTradeLog,
+    settleTradeLog,
+    ensureTradeLog,
+    getTradeConfig,
+    queueTradeLogRecovery,
+    flushQueuedTradeLogRecovery,
+    fmtNum,
+} from '../utils/api';
 import './SwapWrapper.css';
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -12,6 +25,14 @@ const SOL_PRICE_FALLBACK = 150;
 const QUOTE_DEBOUNCE_MS = 350;
 const QUOTE_REFRESH_MS = 15000;
 const PRIORITY_FEE_COMPUTE_UNITS = 250000;
+const TOKEN_ACCOUNT_DATA_SIZE = 165;
+const NETWORK_FEE_BUFFER_SOL = 0.0001;
+const EXECUTION_SAFETY_BUFFER_SOL = 0.0005;
+const FINALIZE_POLL_INTERVAL_MS = 1500;
+const FINALIZE_POLL_TIMEOUT_MS = 15000;
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+const DEFAULT_PLATFORM_FEE_BPS = 50;
 
 function toAtomicAmount(value, decimals) {
     const raw = String(value ?? '').trim().replace(/,/g, '');
@@ -79,16 +100,38 @@ function buildQuoteSnapshot(quote) {
     };
 }
 
+function getAssociatedTokenAddress(owner, mint, tokenProgramId = TOKEN_PROGRAM_ID) {
+    return PublicKey.findProgramAddressSync(
+        [
+            owner.toBuffer(),
+            tokenProgramId.toBuffer(),
+            mint.toBuffer(),
+        ],
+        ASSOCIATED_TOKEN_PROGRAM_ID
+    )[0];
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatPlatformFeePercent(platformFeeBps) {
+    const percentage = (platformFeeBps || 0) / 100;
+    return Number.isInteger(percentage)
+        ? `${percentage}%`
+        : `${percentage.toFixed(2).replace(/\.?0+$/, '')}%`;
+}
+
 export default function SwapWrapper({ pool }) {
     const { connection } = useConnection();
-    const { publicKey, signTransaction, connected } = useWallet();
+    const { publicKey, signTransaction, sendTransaction, connected } = useWallet();
     const { setVisible } = useWalletModal();
 
     const [mode, setMode] = useState('buy');
     const [amount, setAmount] = useState('0.1');
     const [slippage, setSlippage] = useState('1');
     const [priorityFee, setPriorityFee] = useState('0.002');
-    const [protection, setProtection] = useState(false);
+    const [protection, setProtection] = useState(true);
 
     const [showSettings, setShowSettings] = useState(false);
     const [tempPriority, setTempPriority] = useState(priorityFee);
@@ -101,6 +144,8 @@ export default function SwapWrapper({ pool }) {
     const [status, setStatus] = useState({ type: '', msg: '' });
     const [solBalance, setSolBalance] = useState(0);
     const [tokenBalance, setTokenBalance] = useState(0);
+    const [executionReserveSol, setExecutionReserveSol] = useState(0);
+    const [platformFeeBps, setPlatformFeeBps] = useState(DEFAULT_PLATFORM_FEE_BPS);
 
     const [activeAmountPreset, setActiveAmountPreset] = useState('0.1');
     const [activeSlippagePreset, setActiveSlippagePreset] = useState('1');
@@ -110,28 +155,58 @@ export default function SwapWrapper({ pool }) {
     const refreshTimerRef = useRef(null);
     const quoteRequestRef = useRef(0);
 
+    const refreshSolBalance = useCallback(async () => {
+        if (!publicKey || !connected) {
+            setSolBalance(0);
+            return 0;
+        }
+
+        try {
+            const balanceLamports = await connection.getBalance(publicKey, 'confirmed');
+            const nextBalance = balanceLamports / LAMPORTS_PER_SOL;
+            setSolBalance(nextBalance);
+            return nextBalance;
+        } catch (error) {
+            console.error('Balance fetch error:', error);
+            return 0;
+        }
+    }, [connection, publicKey, connected]);
+
+    const refreshTokenBalance = useCallback(async () => {
+        if (!publicKey || !connected || !pool.baseMint) {
+            setTokenBalance(0);
+            return 0;
+        }
+
+        try {
+            const mintPubkey = new PublicKey(pool.baseMint);
+            const accounts = await connection.getParsedTokenAccountsByOwner(publicKey, { mint: mintPubkey }, 'confirmed');
+            let total = 0;
+            for (const { account } of accounts.value) {
+                total += account.data.parsed.info.tokenAmount.uiAmount || 0;
+            }
+            setTokenBalance(total);
+            return total;
+        } catch (error) {
+            console.error('Token balance fetch error:', error);
+            setTokenBalance(0);
+            return 0;
+        }
+    }, [connection, publicKey, connected, pool.baseMint]);
+
     useEffect(() => {
         if (!publicKey || !connected) {
             setSolBalance(0);
             return undefined;
         }
 
-        const fetchBalance = async () => {
-            try {
-                const bal = await connection.getBalance(publicKey);
-                setSolBalance(bal / LAMPORTS_PER_SOL);
-            } catch (error) {
-                console.error('Balance fetch error:', error);
-            }
-        };
-
-        fetchBalance();
+        refreshSolBalance();
         const subId = connection.onAccountChange(publicKey, (accountInfo) => {
             setSolBalance(accountInfo.lamports / LAMPORTS_PER_SOL);
         });
 
         return () => connection.removeAccountChangeListener(subId);
-    }, [publicKey, connected, connection]);
+    }, [publicKey, connected, connection, refreshSolBalance]);
 
     useEffect(() => {
         if (!publicKey || !connected || !pool.baseMint) {
@@ -140,36 +215,76 @@ export default function SwapWrapper({ pool }) {
         }
 
         let cancelled = false;
-
-        const fetchTokenBalance = async () => {
+        const refreshCurrentTokenBalance = async () => {
             try {
-                const mintPubkey = new PublicKey(pool.baseMint);
-                const accounts = await connection.getParsedTokenAccountsByOwner(publicKey, { mint: mintPubkey });
-                if (cancelled) return;
-
-                let total = 0;
-                for (const { account } of accounts.value) {
-                    total += account.data.parsed.info.tokenAmount.uiAmount || 0;
-                }
-                setTokenBalance(total);
-            } catch (_error) {
-                if (!cancelled) setTokenBalance(0);
+                await refreshTokenBalance();
+            } catch (error) {
+                console.error('Token balance refresh error:', error);
             }
         };
 
-        fetchTokenBalance();
-        const intervalId = setInterval(fetchTokenBalance, 15000);
+        refreshCurrentTokenBalance();
+
+        const subscriptionId = connection.onProgramAccountChange(
+            TOKEN_PROGRAM_ID,
+            () => {
+                if (cancelled) return;
+                refreshCurrentTokenBalance();
+            },
+            'confirmed',
+            [
+                { dataSize: TOKEN_ACCOUNT_DATA_SIZE },
+                { memcmp: { offset: 0, bytes: pool.baseMint } },
+                { memcmp: { offset: 32, bytes: publicKey.toBase58() } },
+            ]
+        );
+
+        const intervalId = setInterval(refreshCurrentTokenBalance, 15000);
 
         return () => {
             cancelled = true;
             clearInterval(intervalId);
+            connection.removeProgramAccountChangeListener(subscriptionId).catch(() => {});
         };
-    }, [publicKey, connected, connection, pool.baseMint]);
+    }, [connection, publicKey, connected, pool.baseMint, refreshTokenBalance]);
 
     const inputMint = mode === 'buy' ? SOL_MINT : pool.baseMint;
     const outputMint = mode === 'buy' ? pool.baseMint : SOL_MINT;
     const inputDecimals = mode === 'buy' ? 9 : (pool.baseDecimals ?? 9);
     const outputDecimals = mode === 'buy' ? (pool.baseDecimals ?? 9) : 9;
+
+    useEffect(() => {
+        const fallbackReserve = (Number.parseFloat(priorityFee) || 0) + NETWORK_FEE_BUFFER_SOL + EXECUTION_SAFETY_BUFFER_SOL;
+        let cancelled = false;
+
+        const estimateExecutionReserve = async () => {
+            let nextReserve = fallbackReserve;
+
+            if (publicKey && connected && mode === 'buy' && outputMint && outputMint !== SOL_MINT) {
+                try {
+                    const outputTokenAta = getAssociatedTokenAddress(publicKey, new PublicKey(outputMint));
+                    const outputTokenAtaInfo = await connection.getAccountInfo(outputTokenAta, 'confirmed');
+
+                    if (!outputTokenAtaInfo) {
+                        const ataRentLamports = await connection.getMinimumBalanceForRentExemption(TOKEN_ACCOUNT_DATA_SIZE);
+                        nextReserve += ataRentLamports / LAMPORTS_PER_SOL;
+                    }
+                } catch (error) {
+                    console.error('Execution reserve estimate error:', error);
+                }
+            }
+
+            if (!cancelled) {
+                setExecutionReserveSol(nextReserve);
+            }
+        };
+
+        estimateExecutionReserve();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [connection, connected, mode, outputMint, priorityFee, publicKey]);
 
     const clearQuoteTimers = useCallback(() => {
         if (quoteTimerRef.current) {
@@ -190,6 +305,50 @@ export default function SwapWrapper({ pool }) {
         setQuoteLoading(false);
     }, []);
 
+    const ensureTreasuryFeeAccount = useCallback(async () => {
+        if (platformFeeBps <= 0) {
+            return null;
+        }
+
+        if (!TREASURY) {
+            throw new Error('Treasury wallet is not configured.');
+        }
+
+        const treasuryOwner = new PublicKey(TREASURY);
+        const wsolMint = new PublicKey(SOL_MINT);
+        const feeAccount = getAssociatedTokenAddress(treasuryOwner, wsolMint);
+        const existing = await connection.getAccountInfo(feeAccount, 'confirmed');
+
+        if (!existing) {
+            throw new Error('Treasury fee account is not initialized. Set up the treasury WSOL account before enabling live trades.');
+        }
+
+        return feeAccount.toBase58();
+    }, [connection, platformFeeBps]);
+
+    const getFreshQuote = useCallback(async (overrideAmount) => {
+        const requestedAmount = String(overrideAmount ?? amount ?? '').trim();
+        const numAmount = Number.parseFloat(requestedAmount);
+
+        if (!requestedAmount || !Number.isFinite(numAmount) || numAmount <= 0 || !inputMint || !outputMint) {
+            throw new Error('Enter a valid amount to fetch a live quote.');
+        }
+
+        const atomicAmount = toAtomicAmount(requestedAmount, inputDecimals);
+        if (!atomicAmount || atomicAmount === '0') {
+            throw new Error('Enter a valid amount to fetch a live quote.');
+        }
+
+        return getJupiterQuote({
+            inputMint,
+            outputMint,
+            amount: atomicAmount,
+            slippageBps: toSlippageBps(slippage),
+            restrictIntermediateTokens: protection,
+            platformFeeBps,
+        });
+    }, [amount, inputDecimals, inputMint, outputMint, platformFeeBps, protection, slippage]);
+
     const fetchQuote = useCallback(async (overrideAmount) => {
         const requestedAmount = String(overrideAmount ?? amount ?? '').trim();
         const numAmount = Number.parseFloat(requestedAmount);
@@ -209,13 +368,7 @@ export default function SwapWrapper({ pool }) {
         setQuoteLoading(true);
 
         try {
-            const nextQuote = await getJupiterQuote({
-                inputMint,
-                outputMint,
-                amount: atomicAmount,
-                slippageBps: toSlippageBps(slippage),
-                treasuryWallet: TREASURY,
-            });
+            const nextQuote = await getFreshQuote(requestedAmount);
 
             if (requestId !== quoteRequestRef.current) return;
 
@@ -232,7 +385,61 @@ export default function SwapWrapper({ pool }) {
                 setQuoteLoading(false);
             }
         }
-    }, [amount, inputDecimals, inputMint, outputMint, resetQuoteState, slippage]);
+    }, [amount, getFreshQuote, inputDecimals, inputMint, outputMint, resetQuoteState]);
+
+    const submitSwapTransaction = useCallback(async (transaction) => {
+        if (typeof signTransaction === 'function') {
+            const signed = await signTransaction(transaction);
+            const signature = await connection.sendRawTransaction(signed.serialize(), {
+                skipPreflight: false,
+                preflightCommitment: 'confirmed',
+                maxRetries: 3,
+            });
+
+            return {
+                signature,
+                recentBlockhash: signed.message.recentBlockhash,
+            };
+        }
+
+        if (typeof sendTransaction === 'function') {
+            const signature = await sendTransaction(transaction, connection, {
+                skipPreflight: false,
+                preflightCommitment: 'confirmed',
+                maxRetries: 3,
+            });
+
+            return {
+                signature,
+                recentBlockhash: transaction.message.recentBlockhash,
+            };
+        }
+
+        throw new Error('Wallet cannot sign or send transactions from this browser session.');
+    }, [connection, sendTransaction, signTransaction]);
+
+    const waitForTransactionFinalization = useCallback(async (signature) => {
+        const startedAt = Date.now();
+
+        while ((Date.now() - startedAt) < FINALIZE_POLL_TIMEOUT_MS) {
+            const statusResponse = await connection.getSignatureStatuses([signature], {
+                searchTransactionHistory: true,
+            });
+            const chainStatus = statusResponse?.value?.[0];
+
+            if (chainStatus?.err) {
+                throw new Error(`Transaction failed on-chain: ${JSON.stringify(chainStatus.err)}`);
+            }
+
+            if (chainStatus?.confirmationStatus === 'finalized') {
+                return true;
+            }
+
+            await sleep(FINALIZE_POLL_INTERVAL_MS);
+        }
+
+        return false;
+    }, [connection]);
 
     useEffect(() => {
         const numAmount = Number.parseFloat(amount);
@@ -256,6 +463,51 @@ export default function SwapWrapper({ pool }) {
         clearQuoteTimers();
         quoteRequestRef.current += 1;
     }, [clearQuoteTimers]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadTradeConfig = async () => {
+            try {
+                const config = await getTradeConfig();
+                if (!cancelled && Number.isFinite(Number(config?.platformFeeBps))) {
+                    setPlatformFeeBps(Math.max(0, Math.min(10000, Number(config.platformFeeBps))));
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Trade config fetch error:', error);
+                }
+            }
+        };
+
+        loadTradeConfig();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const flushRecoveryQueue = async () => {
+            try {
+                await flushQueuedTradeLogRecovery();
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Queued trade-log recovery flush error:', error);
+                }
+            }
+        };
+
+        flushRecoveryQueue();
+        const intervalId = setInterval(flushRecoveryQueue, 30000);
+
+        return () => {
+            cancelled = true;
+            clearInterval(intervalId);
+        };
+    }, []);
 
     const handleSellPercent = (pctStr) => {
         const pct = Number.parseInt(pctStr, 10) / 100;
@@ -331,26 +583,62 @@ export default function SwapWrapper({ pool }) {
         setStatus({ type: '', msg: '' });
     };
 
-    const handleSwap = async () => {
+    const handleSwap = useCallback(async () => {
         if (!connected) {
             setVisible(true);
             return;
         }
 
-        if (!quote || !amount) return;
+        if (!publicKey || (!sendTransaction && !signTransaction) || !amount) {
+            setStatus({ type: 'error', msg: 'Wallet is not ready to sign this transaction.' });
+            return;
+        }
 
         setSwapLoading(true);
-        setStatus({ type: 'loading', msg: 'Initiating swap...' });
+        setStatus({ type: 'loading', msg: 'Refreshing live quote...' });
 
         let logId = null;
+        let signature = null;
+        let swapConfirmed = false;
+        let tradeLogPayload = null;
 
         try {
-            const feePercent = 0.005;
-            const feeCollected = mode === 'buy'
-                ? Number.parseFloat(amount) * feePercent
-                : quotedOutputNormalized * feePercent;
+            const numericAmount = Number.parseFloat(amount);
+            if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+                throw new Error('Enter a valid amount before swapping.');
+            }
 
-            const log = await logTradePending({
+            if (mode === 'sell' && numericAmount > tokenBalance) {
+                throw new Error(`Insufficient ${inputSymbol} balance.`);
+            }
+
+            const feeAccount = await ensureTreasuryFeeAccount();
+            const liveQuote = await getFreshQuote(amount);
+            setQuote(liveQuote);
+            setQuoteError('');
+
+            const liveQuotedOutputNormalized = fromAtomicAmount(liveQuote.outAmount, outputDecimals);
+            const liveMinimumOutputNormalized = fromAtomicAmount(liveQuote.otherAmountThreshold ?? liveQuote.outAmount, outputDecimals);
+            const livePriceImpactPct = Number.parseFloat(liveQuote?.priceImpactPct ?? '');
+            const requiredSolForExecution = executionReserveSol + (mode === 'buy' ? numericAmount : 0);
+
+            if (mode === 'buy' && solBalance < requiredSolForExecution) {
+                throw new Error(`Not enough SOL. Keep about ${fmtNum(executionReserveSol, executionReserveSol < 1 ? 4 : 2)} SOL free for fees and account setup.`);
+            }
+
+            if (mode === 'sell' && solBalance < executionReserveSol) {
+                throw new Error(`Not enough SOL to pay network fees. Keep about ${fmtNum(executionReserveSol, executionReserveSol < 1 ? 4 : 2)} SOL free before selling.`);
+            }
+
+            const quotedPlatformFee = fromAtomicAmount(liveQuote?.platformFee?.amount, 9);
+            const feePercent = platformFeeBps / 10000;
+            const feeCollected = quotedPlatformFee > 0
+                ? quotedPlatformFee
+                : mode === 'buy'
+                    ? numericAmount * feePercent
+                    : liveQuotedOutputNormalized * feePercent;
+
+            tradeLogPayload = {
                 poolAddress: pool.poolAddress ?? null,
                 walletAddress: publicKey.toBase58(),
                 inputMint,
@@ -358,68 +646,203 @@ export default function SwapWrapper({ pool }) {
                 tradeMode: mode,
                 inputSymbol,
                 outputSymbol,
-                inputAmount: Number.parseFloat(amount),
-                expectedOutput: quotedOutputNormalized,
-                quotedOutput: quotedOutputNormalized,
-                minimumOutput: minimumOutputNormalized,
+                inputAmount: numericAmount,
+                expectedOutput: liveQuotedOutputNormalized,
+                quotedOutput: liveQuotedOutputNormalized,
+                minimumOutput: liveMinimumOutputNormalized,
                 feeCollectedSol: feeCollected,
                 slippageBps: toSlippageBps(slippage),
                 priorityFeeSol: Number.parseFloat(priorityFee) || 0,
-                priceImpactPct: Number.isFinite(priceImpactPct) ? priceImpactPct : null,
-                quoteSnapshot: buildQuoteSnapshot(quote),
-            });
-            logId = log.id;
+                priceImpactPct: Number.isFinite(livePriceImpactPct) ? livePriceImpactPct : null,
+                quoteSnapshot: buildQuoteSnapshot(liveQuote),
+            };
+
+            try {
+                const log = await logTradePending(tradeLogPayload);
+                logId = log.id;
+            } catch (logError) {
+                console.error('Trade log start error:', logError);
+            }
+
+            setStatus({ type: 'loading', msg: 'Initiating swap...' });
 
             const priorityFeeSol = Number.parseFloat(priorityFee) || 0;
             const microLamports = Math.floor((priorityFeeSol * 1e15) / PRIORITY_FEE_COMPUTE_UNITS);
-            const { swapTransaction } = await getJupiterSwapTransaction(
-                quote,
+            const { swapTransaction, lastValidBlockHeight } = await getJupiterSwapTransaction(
+                liveQuote,
                 publicKey.toBase58(),
-                microLamports
+                microLamports,
+                feeAccount,
+                TREASURY,
+                platformFeeBps
             );
 
             const transactionBuf = Uint8Array.from(atob(swapTransaction), (char) => char.charCodeAt(0));
             const transaction = VersionedTransaction.deserialize(transactionBuf);
-            const signed = await signTransaction(transaction);
+            const submission = await submitSwapTransaction(transaction);
+            signature = submission.signature;
+            setStatus({ type: 'loading', msg: 'Swap sent. Waiting for confirmation...' });
 
-            const signature = await connection.sendRawTransaction(signed.serialize(), {
-                skipPreflight: true,
-                maxRetries: 2,
+            const confirmation = await connection.confirmTransaction({
+                signature,
+                blockhash: submission.recentBlockhash,
+                lastValidBlockHeight,
+            }, 'confirmed');
+
+            if (confirmation.value?.err) {
+                throw new Error(`Transaction failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+            }
+
+            swapConfirmed = true;
+            let finalizedTradeLog = false;
+
+            if (logId) {
+                try {
+                    await finalizeTradeLog(logId, 'success', signature, null);
+                    finalizedTradeLog = true;
+                } catch (logError) {
+                    console.error('Trade log finalize error:', logError);
+                }
+            }
+
+            if (!logId || !finalizedTradeLog) {
+                const recoveredLog = await ensureTradeLog({
+                    id: logId,
+                    ...tradeLogPayload,
+                    status: 'success',
+                    txSignature: signature,
+                    errorMessage: null,
+                }).catch((logError) => {
+                    console.error('Trade log recovery error:', logError);
+                    queueTradeLogRecovery({
+                        id: logId,
+                        ...tradeLogPayload,
+                        status: 'success',
+                        txSignature: signature,
+                        errorMessage: null,
+                    });
+                    return null;
+                });
+
+                if (recoveredLog?.id) {
+                    logId = recoveredLog.id;
+                }
+            }
+
+            setStatus({ type: 'loading', msg: 'Swap confirmed. Finalizing on-chain details...' });
+            const finalizedOnChain = await waitForTransactionFinalization(signature).catch((finalizeError) => {
+                console.error('Transaction finalization check error:', finalizeError);
+                return false;
             });
 
-            await connection.confirmTransaction(signature, 'confirmed');
-            await finalizeTradeLog(logId, 'success', signature, null);
+            await Promise.allSettled([
+                refreshSolBalance(),
+                refreshTokenBalance(),
+                logId ? settleTradeLog(logId, signature) : Promise.resolve(null),
+            ]);
 
-            setStatus({ type: 'success', msg: 'Swap successful!' });
+            setStatus({
+                type: 'success',
+                msg: finalizedOnChain ? 'Swap successful!' : 'Swap confirmed. Settlement is syncing.',
+            });
             setAmount('');
         } catch (error) {
             console.error('Swap execution error:', error);
             setStatus({ type: 'error', msg: error.message || 'Swap failed' });
 
-            if (logId) {
-                await finalizeTradeLog(logId, 'failed', null, error.message || 'Swap failed').catch(() => {});
+            if (tradeLogPayload && !swapConfirmed) {
+                let loggedFailure = false;
+
+                if (logId) {
+                    try {
+                        await finalizeTradeLog(logId, 'failed', signature, error.message || 'Swap failed');
+                        loggedFailure = true;
+                    } catch (logError) {
+                        console.error('Trade log failure finalize error:', logError);
+                    }
+                }
+
+                if (!loggedFailure) {
+                    await ensureTradeLog({
+                        id: logId,
+                        ...tradeLogPayload,
+                        status: 'failed',
+                        txSignature: signature,
+                        errorMessage: error.message || 'Swap failed',
+                    }).catch((logError) => {
+                        console.error('Trade log failure recovery error:', logError);
+                        queueTradeLogRecovery({
+                            id: logId,
+                            ...tradeLogPayload,
+                            status: 'failed',
+                            txSignature: signature,
+                            errorMessage: error.message || 'Swap failed',
+                        });
+                    });
+                }
             }
         } finally {
             setSwapLoading(false);
         }
-    };
+    }, [
+        amount,
+        connected,
+        connection,
+        ensureTreasuryFeeAccount,
+        executionReserveSol,
+        getFreshQuote,
+        inputMint,
+        inputSymbol,
+        mode,
+        outputDecimals,
+        outputMint,
+        outputSymbol,
+        platformFeeBps,
+        priorityFee,
+        publicKey,
+        refreshSolBalance,
+        refreshTokenBalance,
+        sendTransaction,
+        signTransaction,
+        solBalance,
+        setVisible,
+        slippage,
+        submitSwapTransaction,
+        tokenBalance,
+        waitForTransactionFinalization,
+        pool.poolAddress,
+    ]);
 
     const currentBalance = mode === 'buy' ? solBalance : tokenBalance;
     const currentAmount = Number.parseFloat(amount);
     const hasAmount = Number.isFinite(currentAmount) && currentAmount > 0;
-    const insufficientBalance = connected && hasAmount && currentAmount > currentBalance;
-    const actionDisabled = swapLoading || (connected && (!hasAmount || !quote || insufficientBalance));
+    const priorityFeeValue = Number.parseFloat(priorityFee) || 0;
+    const baseExecutionReserveSol = priorityFeeValue + NETWORK_FEE_BUFFER_SOL + EXECUTION_SAFETY_BUFFER_SOL;
+    const includesTokenAccountSetup = executionReserveSol > (baseExecutionReserveSol + 0.000001);
+    const insufficientSwapInput = connected && hasAmount && mode === 'buy' && currentAmount > solBalance;
+    const insufficientTokenInput = connected && hasAmount && mode === 'sell' && currentAmount > tokenBalance;
+    const insufficientSolForExecution = connected && (
+        mode === 'buy'
+            ? (currentAmount + executionReserveSol) > solBalance
+            : executionReserveSol > solBalance
+    );
+    const insufficientBalance = insufficientSwapInput || insufficientTokenInput || insufficientSolForExecution;
+    const actionDisabled = swapLoading || quoteLoading || (connected && (!hasAmount || !quote || insufficientBalance));
     const actionLabel = swapLoading
         ? 'PROCESSING...'
         : !connected
             ? 'CONNECT WALLET'
-            : insufficientBalance
+            : quoteLoading
+                ? 'FETCHING QUOTE...'
+            : insufficientTokenInput
                 ? `INSUFFICIENT ${inputSymbol}`
-                : !quote && quoteLoading
-                    ? 'FETCHING QUOTE...'
-                    : mode === 'buy'
-                        ? 'BUY'
-                        : 'SELL';
+            : insufficientSwapInput
+                ? 'INSUFFICIENT SOL'
+            : insufficientSolForExecution
+                ? `KEEP ${fmtNum(executionReserveSol, executionReserveSol < 1 ? 4 : 2)} SOL FOR FEES`
+                : mode === 'buy'
+                    ? 'BUY'
+                    : 'SELL';
 
     return (
         <div className="sw">
@@ -599,7 +1022,12 @@ export default function SwapWrapper({ pool }) {
                         Price impact: {priceImpactPct.toFixed(2)}%
                     </span>
                 ) : null}
-                <span>platform fee: 0.5%</span>
+                <span>execution safety: {protection ? 'on' : 'off'}</span>
+                <span>platform fee: {formatPlatformFeePercent(platformFeeBps)}</span>
+                <span>
+                    execution reserve: ~{fmtNum(executionReserveSol, executionReserveSol < 1 ? 4 : 2)} SOL
+                    {includesTokenAccountSetup ? ' including token account setup' : ''}
+                </span>
                 <div className="sw-priority-shield">
                     priority fee: {priorityFee} SOL
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2">
@@ -629,7 +1057,7 @@ export default function SwapWrapper({ pool }) {
                         <div className="ts-body">
                             <div className="ts-section">
                                 <div className="ts-label-row">
-                                    <span className="ts-label">Front running protection</span>
+                                    <span className="ts-label">Execution safety</span>
                                     <label className="ts-toggle">
                                         <input
                                             type="checkbox"
@@ -640,7 +1068,7 @@ export default function SwapWrapper({ pool }) {
                                     </label>
                                 </div>
                                 <p className="ts-desc">
-                                    Front-running protection prevents <strong>sandwich attacks</strong> on your swaps. With this feature enabled you can safely use high slippage.
+                                    Keeps Jupiter on restricted intermediate-token routes for steadier execution. This improves route safety, but it is <strong>not</strong> a private-relay or MEV shield.
                                 </p>
                             </div>
 

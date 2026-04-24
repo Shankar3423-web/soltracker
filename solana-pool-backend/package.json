@@ -4,6 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node --max-old-space-size=256 server.js",
+    "init:treasury-fee-account": "node scripts/init_treasury_fee_account.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

@@ -4,15 +4,18 @@ const https = require('https');
 const http = require('http');
 const { aggregateAllPools } = require('./aggregationService');
 const { refreshAllLiquidity } = require('./liquidityService');
+const { retryPendingTradeSettlements } = require('./tradeSettlementService');
 
 let started = false;
 
 const ENABLE_AGGREGATION_JOBS = process.env.ENABLE_AGGREGATION_JOBS === 'true';
 const ENABLE_LIQUIDITY_REFRESH = process.env.ENABLE_LIQUIDITY_REFRESH === 'true';
+const ENABLE_TRADE_SETTLEMENT_RETRY = process.env.ENABLE_TRADE_SETTLEMENT_RETRY !== 'false';
 const ENABLE_KEEP_ALIVE = process.env.ENABLE_KEEP_ALIVE !== 'false';
 
 let isAggregating = false;
 let isRefreshing = false;
+let isSettlingTrades = false;
 
 function startKeepAlive() {
     if (!ENABLE_KEEP_ALIVE) {
@@ -89,6 +92,38 @@ function startScheduler() {
         setInterval(runLiquidity, 10 * 60_000);
     } else {
         console.log('[Scheduler] Liquidity refresh disabled by ENABLE_LIQUIDITY_REFRESH=false');
+    }
+
+    if (ENABLE_TRADE_SETTLEMENT_RETRY) {
+        const runTradeSettlementRetry = async () => {
+            if (isSettlingTrades) {
+                console.log('[Scheduler] Skip: Trade settlement retry already in progress');
+                return;
+            }
+
+            isSettlingTrades = true;
+            try {
+                const settledCount = await retryPendingTradeSettlements(
+                    Number.parseInt(process.env.TRADE_SETTLEMENT_RETRY_BATCH_SIZE || '20', 10) || 20
+                );
+
+                if (settledCount > 0) {
+                    console.log(`[Scheduler] Settled ${settledCount} pending trade(s)`);
+                }
+            } catch (err) {
+                console.error('[Scheduler] Trade settlement retry error:', err.message);
+            } finally {
+                isSettlingTrades = false;
+            }
+        };
+
+        setTimeout(runTradeSettlementRetry, 20_000);
+        setInterval(
+            runTradeSettlementRetry,
+            Number.parseInt(process.env.TRADE_SETTLEMENT_RETRY_INTERVAL_MS || '60000', 10) || 60_000
+        );
+    } else {
+        console.log('[Scheduler] Trade settlement retries disabled by ENABLE_TRADE_SETTLEMENT_RETRY=false');
     }
 
     startKeepAlive();

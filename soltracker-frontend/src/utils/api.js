@@ -1,5 +1,6 @@
 const BASE = process.env.REACT_APP_API_URL || 'http://localhost:3000';
 export const SOCKET_URL = process.env.REACT_APP_WS_URL || BASE;
+const TRADE_LOG_RECOVERY_QUEUE_KEY = 'trade_log_recovery_queue_v1';
 
 const SOURCE_DEXES = [
     'Raydium CP-Swap',
@@ -448,6 +449,88 @@ export async function finalizeTradeLog(id, status, txSignature, errorMessage = n
     });
     if (!res.ok) throw new Error('Failed to update trade status');
     return res.json();
+}
+
+export async function settleTradeLog(id, txSignature) {
+    const res = await fetch(`${BASE}/trades/${id}/settle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ txSignature }),
+    });
+    if (!res.ok) throw new Error('Failed to settle trade log');
+    return res.json();
+}
+
+export async function ensureTradeLog(data) {
+    const res = await fetch(`${BASE}/trades/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to recover trade log');
+    return res.json();
+}
+
+export async function getTradeConfig() {
+    const res = await fetch(`${BASE}/trades/config`);
+    if (!res.ok) throw new Error('Failed to load trade config');
+    return res.json();
+}
+
+function readTradeLogRecoveryQueue() {
+    try {
+        const raw = localStorage.getItem(TRADE_LOG_RECOVERY_QUEUE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function writeTradeLogRecoveryQueue(queue) {
+    try {
+        if (!queue.length) {
+            localStorage.removeItem(TRADE_LOG_RECOVERY_QUEUE_KEY);
+            return;
+        }
+
+        localStorage.setItem(TRADE_LOG_RECOVERY_QUEUE_KEY, JSON.stringify(queue));
+    } catch {
+        // Ignore storage failures; the live request path has already surfaced errors.
+    }
+}
+
+export function queueTradeLogRecovery(payload) {
+    const queue = readTradeLogRecoveryQueue();
+    const nextPayload = { ...payload };
+    const key = JSON.stringify(nextPayload);
+
+    if (queue.some((item) => JSON.stringify(item) === key)) {
+        return;
+    }
+
+    queue.push(nextPayload);
+    writeTradeLogRecoveryQueue(queue);
+}
+
+export async function flushQueuedTradeLogRecovery() {
+    const queue = readTradeLogRecoveryQueue();
+    if (!queue.length) return 0;
+
+    const remaining = [];
+    let flushed = 0;
+
+    for (const payload of queue) {
+        try {
+            await ensureTradeLog(payload);
+            flushed += 1;
+        } catch {
+            remaining.push(payload);
+        }
+    }
+
+    writeTradeLogRecoveryQueue(remaining);
+    return flushed;
 }
 
 export { BASE };

@@ -31,6 +31,13 @@ async function run() {
             ADD COLUMN IF NOT EXISTS priority_fee_sol NUMERIC,
             ADD COLUMN IF NOT EXISTS price_impact_pct NUMERIC,
             ADD COLUMN IF NOT EXISTS quote_snapshot JSONB,
+            ADD COLUMN IF NOT EXISTS actual_input_amount NUMERIC,
+            ADD COLUMN IF NOT EXISTS actual_output_amount NUMERIC,
+            ADD COLUMN IF NOT EXISTS actual_fee_collected_sol NUMERIC,
+            ADD COLUMN IF NOT EXISTS network_fee_sol NUMERIC,
+            ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS tx_slot BIGINT,
+            ADD COLUMN IF NOT EXISTS settlement_snapshot JSONB,
             ADD COLUMN IF NOT EXISTS error_message TEXT;
         `);
 

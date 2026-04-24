@@ -7,17 +7,28 @@ const JUPITER_SWAP_API = 'https://api.jup.ag/swap/v1/swap';
  * @param {string} outputMint - Token user is buying
  * @param {number} amount - Amount in atomic units (e.g. lamports)
  * @param {number} slippageBps - Slippage in basis points (1% = 100)
- * @param {string} treasuryWallet - Your wallet to receive fees
  */
 export async function getJupiterQuote({
     inputMint,
     outputMint,
     amount,
     slippageBps = 50,
-    treasuryWallet
+    restrictIntermediateTokens = true,
+    platformFeeBps = 50,
 }) {
-    // feeBps: 50 = 0.5%
-    const url = `${JUPITER_QUOTE_API}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}&platformFeeBps=50`;
+    const params = new URLSearchParams({
+        inputMint,
+        outputMint,
+        amount: String(amount),
+        slippageBps: String(slippageBps),
+        restrictIntermediateTokens: String(restrictIntermediateTokens),
+    });
+
+    if (Number.isFinite(Number(platformFeeBps)) && Number(platformFeeBps) > 0) {
+        params.set('platformFeeBps', String(Math.max(0, Math.min(10000, Number(platformFeeBps)))));
+    }
+
+    const url = `${JUPITER_QUOTE_API}?${params.toString()}`;
     
     const res = await fetch(url);
     if (!res.ok) {
@@ -32,16 +43,39 @@ export async function getJupiterQuote({
  * @param {object} quoteResponse - The quote object from getJupiterQuote
  * @param {string} userPublicKey - The user's wallet address
  */
-export async function getJupiterSwapTransaction(quoteResponse, userPublicKey, computeUnitPriceMicroLamports) {
+export async function getJupiterSwapTransaction(
+    quoteResponse,
+    userPublicKey,
+    computeUnitPriceMicroLamports,
+    feeAccount,
+    trackingAccount,
+    platformFeeBps = 50
+) {
+    const normalizedPlatformFeeBps = Number.isFinite(Number(platformFeeBps))
+        ? Math.max(0, Math.min(10000, Number(platformFeeBps)))
+        : 50;
+
+    if (normalizedPlatformFeeBps > 0 && !feeAccount) {
+        throw new Error('Treasury fee account is required when platform fees are enabled.');
+    }
+
+    const requestBody = {
+        quoteResponse,
+        userPublicKey,
+        wrapAndUnwrapSol: true,
+        dynamicComputeUnitLimit: true,
+        computeUnitPriceMicroLamports: computeUnitPriceMicroLamports || 0,
+        trackingAccount,
+    };
+
+    if (normalizedPlatformFeeBps > 0) {
+        requestBody.feeAccount = feeAccount;
+    }
+
     const res = await fetch(JUPITER_SWAP_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            quoteResponse,
-            userPublicKey,
-            wrapAndUnwrapSol: true,
-            computeUnitPriceMicroLamports: computeUnitPriceMicroLamports || 0,
-        })
+        body: JSON.stringify(requestBody)
     });
 
     if (!res.ok) {

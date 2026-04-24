@@ -202,6 +202,13 @@ CREATE TABLE IF NOT EXISTS trade_logs (
     price_impact_pct NUMERIC,                      -- Jupiter price impact
     quote_snapshot JSONB,                          -- Compact live quote payload for debugging
     tx_signature TEXT,                             -- Transaction hash (filled after success)
+    actual_input_amount NUMERIC,                   -- Landed input amount observed on-chain
+    actual_output_amount NUMERIC,                  -- Landed output amount observed on-chain
+    actual_fee_collected_sol NUMERIC,              -- Landed treasury fee credited in WSOL/SOL units
+    network_fee_sol NUMERIC,                       -- Network fee actually paid by the user
+    settled_at TIMESTAMPTZ,                        -- When the landed trade was reconciled
+    tx_slot BIGINT,                                -- Confirmed slot for the swap
+    settlement_snapshot JSONB,                     -- Raw settlement deltas for debugging
     error_message TEXT,                            -- Failure reason if swap/log update fails
     status TEXT NOT NULL DEFAULT 'pending',        -- 'pending', 'success', 'failed'
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -219,6 +226,13 @@ ALTER TABLE trade_logs
     ADD COLUMN IF NOT EXISTS priority_fee_sol NUMERIC,
     ADD COLUMN IF NOT EXISTS price_impact_pct NUMERIC,
     ADD COLUMN IF NOT EXISTS quote_snapshot JSONB,
+    ADD COLUMN IF NOT EXISTS actual_input_amount NUMERIC,
+    ADD COLUMN IF NOT EXISTS actual_output_amount NUMERIC,
+    ADD COLUMN IF NOT EXISTS actual_fee_collected_sol NUMERIC,
+    ADD COLUMN IF NOT EXISTS network_fee_sol NUMERIC,
+    ADD COLUMN IF NOT EXISTS settled_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS tx_slot BIGINT,
+    ADD COLUMN IF NOT EXISTS settlement_snapshot JSONB,
     ADD COLUMN IF NOT EXISTS error_message TEXT;
 
 -- Indexes for performance

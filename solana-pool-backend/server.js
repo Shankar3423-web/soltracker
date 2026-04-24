@@ -3,6 +3,7 @@ const http = require('http');
 const app = require('./src/app');
 const server = http.createServer(app);
 const { initSocket } = require('./src/services/socketService');
+const { verifyTreasuryFeeAccount } = require('./src/services/treasuryService');
 
 // ─── Process-level crash guards ───────────────────────────────────────────────
 // These prevent a single failed async operation from killing the entire server.
@@ -29,4 +30,5 @@ server.listen(PORT, () => {
     console.log(`🚀 Solana Pool Decoder running on port ${PORT}`);
     // Start background aggregation + liquidity jobs
     startScheduler();
+    verifyTreasuryFeeAccount();
 });
