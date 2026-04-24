@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { VersionedTransaction, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
@@ -8,6 +8,7 @@ import './SwapWrapper.css';
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const TREASURY = process.env.REACT_APP_TREASURY_WALLET;
+const SOL_PRICE_FALLBACK = 150; // rough fallback
 
 export default function SwapWrapper({ pool }) {
     const { connection } = useConnection();
@@ -19,63 +20,143 @@ export default function SwapWrapper({ pool }) {
     const [slippage, setSlippage] = useState('1');
     const [priorityFee, setPriorityFee] = useState('0.002');
     const [protection, setProtection] = useState(false);
-    
+
     const [showSettings, setShowSettings] = useState(false);
     const [tempPriority, setTempPriority] = useState(priorityFee);
     const [tempProtection, setTempProtection] = useState(protection);
 
     const [quote, setQuote] = useState(null);
-    const [loading, setLoading] = useState(false);
+    const [quoteLoading, setQuoteLoading] = useState(false);
+    const [swapLoading, setSwapLoading] = useState(false);
     const [status, setStatus] = useState({ type: '', msg: '' });
-    const [balance, setBalance] = useState(0);
+    const [solBalance, setSolBalance] = useState(0);
+    const [tokenBalance, setTokenBalance] = useState(0);
 
-    // Fetch user balance
+    // Track which preset is active
+    const [activeAmountPreset, setActiveAmountPreset] = useState('0.1');
+    const [activeSlippagePreset, setActiveSlippagePreset] = useState('1');
+    const [activeSellPercent, setActiveSellPercent] = useState(null);
+
+    const quoteTimerRef = useRef(null);
+    const refreshTimerRef = useRef(null);
+
+    // ---------- Fetch SOL balance ----------
     useEffect(() => {
-        if (!publicKey || !connected) return;
+        if (!publicKey || !connected) { setSolBalance(0); return; }
         const fetchBalance = async () => {
-            const bal = await connection.getBalance(publicKey);
-            setBalance(bal / LAMPORTS_PER_SOL);
+            try {
+                const bal = await connection.getBalance(publicKey);
+                setSolBalance(bal / LAMPORTS_PER_SOL);
+            } catch (e) { console.error('Balance fetch error:', e); }
         };
         fetchBalance();
         const subId = connection.onAccountChange(publicKey, (acc) => {
-            setBalance(acc.lamports / LAMPORTS_PER_SOL);
+            setSolBalance(acc.lamports / LAMPORTS_PER_SOL);
         });
         return () => connection.removeAccountChangeListener(subId);
     }, [publicKey, connected, connection]);
 
+    // ---------- Fetch SPL token balance ----------
+    useEffect(() => {
+        if (!publicKey || !connected || !pool.baseMint) { setTokenBalance(0); return; }
+        let cancelled = false;
+        const fetchTokenBal = async () => {
+            try {
+                const mintPubkey = new PublicKey(pool.baseMint);
+                const accounts = await connection.getParsedTokenAccountsByOwner(publicKey, { mint: mintPubkey });
+                if (cancelled) return;
+                let total = 0;
+                for (const { account } of accounts.value) {
+                    total += account.data.parsed.info.tokenAmount.uiAmount || 0;
+                }
+                setTokenBalance(total);
+            } catch (e) {
+                if (!cancelled) setTokenBalance(0);
+            }
+        };
+        fetchTokenBal();
+        // Refresh every 15s
+        const id = setInterval(fetchTokenBal, 15000);
+        return () => { cancelled = true; clearInterval(id); };
+    }, [publicKey, connected, connection, pool.baseMint]);
+
     const inputMint = mode === 'buy' ? SOL_MINT : pool.baseMint;
     const outputMint = mode === 'buy' ? pool.baseMint : SOL_MINT;
 
-    // Debounced quote fetch
+    // ---------- Quote Fetch ----------
+    const fetchQuote = useCallback(async (overrideAmount) => {
+        const numAmount = parseFloat(overrideAmount ?? amount);
+        if (!numAmount || numAmount <= 0 || !inputMint || !outputMint) {
+            setQuote(null);
+            return;
+        }
+        setQuoteLoading(true);
+        try {
+            const decimals = mode === 'buy' ? 9 : (pool.baseDecimals ?? 9);
+            const atomicAmount = Math.floor(numAmount * Math.pow(10, decimals));
+            const q = await getJupiterQuote({
+                inputMint,
+                outputMint,
+                amount: atomicAmount,
+                slippageBps: Math.round(parseFloat(slippage) * 100),
+                treasuryWallet: TREASURY
+            });
+            setQuote(q);
+        } catch (err) {
+            console.error('Quote error:', err);
+            setQuote(null);
+        } finally {
+            setQuoteLoading(false);
+        }
+    }, [amount, mode, slippage, inputMint, outputMint, pool.baseDecimals]);
+
+    // Debounced quote on input changes
     useEffect(() => {
         const numAmount = parseFloat(amount);
         if (!numAmount || numAmount <= 0) {
             setQuote(null);
             return;
         }
+        // Clear existing timers
+        if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
+        if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
 
-        const timer = setTimeout(async () => {
-            try {
-                const decimals = mode === 'buy' ? 9 : (pool.baseDecimals ?? 9);
-                const atomicAmount = Math.floor(numAmount * Math.pow(10, decimals));
-                
-                const q = await getJupiterQuote({
-                    inputMint,
-                    outputMint,
-                    amount: atomicAmount,
-                    slippageBps: parseFloat(slippage) * 100,
-                    treasuryWallet: TREASURY
-                });
-                setQuote(q);
-            } catch (err) {
-                console.error('Quote error:', err);
-                setQuote(null);
-            }
+        quoteTimerRef.current = setTimeout(() => {
+            fetchQuote();
+            // Auto-refresh every 15 seconds (like real DEX Screener)
+            refreshTimerRef.current = setInterval(() => fetchQuote(), 15000);
         }, 350);
 
-        return () => clearTimeout(timer);
-    }, [amount, mode, slippage, inputMint, outputMint, pool.baseDecimals]);
+        return () => {
+            if (quoteTimerRef.current) clearTimeout(quoteTimerRef.current);
+            if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
+        };
+    }, [amount, mode, slippage, inputMint, outputMint, fetchQuote]);
 
+    // ---------- Sell percentage handler ----------
+    const handleSellPercent = (pctStr) => {
+        const pct = parseInt(pctStr) / 100;
+        if (!tokenBalance || tokenBalance <= 0) return;
+        const sellAmount = tokenBalance * pct;
+        setActiveSellPercent(pctStr);
+        setActiveAmountPreset(null);
+        setAmount(String(sellAmount));
+    };
+
+    // ---------- Buy preset handler ----------
+    const handleBuyPreset = (val) => {
+        setActiveAmountPreset(String(val));
+        setActiveSellPercent(null);
+        setAmount(String(val));
+    };
+
+    // ---------- Slippage preset handler ----------
+    const handleSlippagePreset = (val) => {
+        setActiveSlippagePreset(String(val));
+        setSlippage(String(val));
+    };
+
+    // ---------- Swap Execution ----------
     const handleSwap = async () => {
         if (!connected) {
             setVisible(true);
@@ -83,13 +164,15 @@ export default function SwapWrapper({ pool }) {
         }
         if (!quote) return;
 
-        setLoading(true);
+        setSwapLoading(true);
         setStatus({ type: 'loading', msg: 'Initiating swap...' });
         let logId = null;
 
         try {
             const feePercent = 0.005; // 0.5%
-            const feeCollected = mode === 'buy' ? parseFloat(amount) * feePercent : ((quote.outAmount / Math.pow(10, 9)) * feePercent);
+            const feeCollected = mode === 'buy'
+                ? parseFloat(amount) * feePercent
+                : ((quote.outAmount / Math.pow(10, 9)) * feePercent);
 
             const log = await logTradePending({
                 walletAddress: publicKey.toBase58(),
@@ -101,8 +184,6 @@ export default function SwapWrapper({ pool }) {
             });
             logId = log.id;
 
-            // Prioritizing transaction speed based on settings
-            // Micro-lamports calculation based on SOL priority fee input (roughly assume 250k compute units)
             const prioSol = parseFloat(priorityFee);
             const microLamports = Math.floor((prioSol * 1e9) / 0.25);
 
@@ -129,15 +210,35 @@ export default function SwapWrapper({ pool }) {
                 await finalizeTradeLog(logId, 'failed', null).catch(() => {});
             }
         } finally {
-            setLoading(false);
+            setSwapLoading(false);
         }
     };
 
-    const outAmountNormalized = quote 
-        ? parseFloat(quote.outAmount) / Math.pow(10, mode === 'buy' ? (pool.baseDecimals ?? 9) : 9)
+    // ---------- Computed values ----------
+    const outDecimals = mode === 'buy' ? (pool.baseDecimals ?? 9) : 9;
+    const outAmountNormalized = quote
+        ? parseFloat(quote.outAmount) / Math.pow(10, outDecimals)
         : 0;
 
-    const usdValue = quote ? (outAmountNormalized * (pool.stats?.priceUsd || 0)) : 0;
+    // USD value of output
+    const tokenPriceUsd = pool.stats?.priceUsd || 0;
+    const solPriceUsd = tokenPriceUsd && pool.stats?.priceNative
+        ? tokenPriceUsd / pool.stats.priceNative
+        : SOL_PRICE_FALLBACK;
+
+    const usdValue = mode === 'buy'
+        ? outAmountNormalized * tokenPriceUsd
+        : outAmountNormalized * solPriceUsd;
+
+    // Format output for display
+    const formatReceiveAmount = (val) => {
+        if (!val || val === 0) return '0';
+        if (val >= 1000000) return fmtNum(val, 2);
+        if (val >= 1000) return val.toLocaleString('en-US', { maximumFractionDigits: 2 });
+        if (val >= 1) return val.toFixed(2);
+        if (val >= 0.001) return val.toFixed(4);
+        return val.toFixed(6);
+    };
 
     const openSettings = () => {
         setTempPriority(priorityFee);
@@ -151,12 +252,27 @@ export default function SwapWrapper({ pool }) {
         setShowSettings(false);
     };
 
+    // Reset state when mode switches
+    const switchMode = (newMode) => {
+        if (newMode === mode) return;
+        setMode(newMode);
+        setQuote(null);
+        setActiveAmountPreset(newMode === 'buy' ? '0.1' : null);
+        setActiveSellPercent(null);
+        setAmount(newMode === 'buy' ? '0.1' : '');
+        setStatus({ type: '', msg: '' });
+    };
+
+    const outputSymbol = mode === 'buy' ? pool.baseSymbol : 'SOL';
+    const inputSymbol = mode === 'buy' ? 'SOL' : pool.baseSymbol;
+    const currentBalance = mode === 'buy' ? solBalance : tokenBalance;
+
     return (
         <div className="sw">
             <div className="sw-tabs">
-                <button 
+                <button
                     className={`sw-tab ${mode === 'buy' ? 'active buy' : ''}`}
-                    onClick={() => { setMode('buy'); setAmount('0.1'); setQuote(null); }}
+                    onClick={() => switchMode('buy')}
                 >
                     <div className="sw-icon">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -167,9 +283,9 @@ export default function SwapWrapper({ pool }) {
                     </div>
                     Buy
                 </button>
-                <button 
+                <button
                     className={`sw-tab ${mode === 'sell' ? 'active sell' : ''}`}
-                    onClick={() => { setMode('sell'); setAmount('2'); setQuote(null); }}
+                    onClick={() => switchMode('sell')}
                 >
                     <div className="sw-icon">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -189,32 +305,52 @@ export default function SwapWrapper({ pool }) {
                            <>
                              <svg width="20" height="20" viewBox="0 0 128 128">
                                <path d="M110.1 76.5l-19.1 8.8L17.2 46.1c-1.3-.6-1.3-2.6 0-3.3L37.1 34l73.8 39.2c1.3.7 1.3 2.7-.8 3.3zm-92.2-25l19.1-8.8L110.8 81.9c1.3.6 1.3 2.6 0 3.3L90.9 94l-73.8-39.2c-1.3-.7-1.3-2.7.8-3.3zm0-25l19.1-8.8L110.8 56.9c1.3.6 1.3 2.6 0 3.3L90.9 69l-73.8-39.2c-1.3-.7-1.3-2.7.8-3.3z" fill="#9945FF"/>
-                               <path d="M110.1 76.5l-19.1 8.8L17.2 46.1c-1.3-.6-1.3-2.6 0-3.3L37.1 34l73.8 39.2c1.3.7 1.3 2.7-.8 3.3zm-92.2-25l19.1-8.8L110.8 81.9c1.3.6 1.3 2.6 0 3.3L90.9 94l-73.8-39.2c-1.3-.7-1.3-2.7.8-3.3zm0-25l19.1-8.8L110.8 56.9c1.3.6 1.3 2.6 0 3.3L90.9 69l-73.8-39.2c-1.3-.7-1.3-2.7.8-3.3z" fill="url(#a)"/>
-                               <defs><linearGradient id="a" x1="12.3" y1="12.3" x2="115.7" y2="115.7" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#9945ff"/><stop offset=".5" stop-color="#14f195"/><stop offset="1" stop-color="#14f195"/></linearGradient></defs>
+                               <path d="M110.1 76.5l-19.1 8.8L17.2 46.1c-1.3-.6-1.3-2.6 0-3.3L37.1 34l73.8 39.2c1.3.7 1.3 2.7-.8 3.3zm-92.2-25l19.1-8.8L110.8 81.9c1.3.6 1.3 2.6 0 3.3L90.9 94l-73.8-39.2c-1.3-.7-1.3-2.7.8-3.3zm0-25l19.1-8.8L110.8 56.9c1.3.6 1.3 2.6 0 3.3L90.9 69l-73.8-39.2c-1.3-.7-1.3-2.7.8-3.3z" fill="url(#sol-grad-sw)"/>
+                               <defs><linearGradient id="sol-grad-sw" x1="12.3" y1="12.3" x2="115.7" y2="115.7" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#9945ff"/><stop offset=".5" stopColor="#14f195"/><stop offset="1" stopColor="#14f195"/></linearGradient></defs>
                              </svg>
                              SOL
                            </>
                         ) : (
                             <>
-                                {pool.baseLogo ? <img src={pool.baseLogo} alt="" /> : <span>{pool.baseSymbol[0]}</span>}
+                                {pool.baseLogo ? <img src={pool.baseLogo} alt="" /> : <span className="sw-token-letter">{(pool.baseSymbol || '?')[0]}</span>}
                                 {pool.baseSymbol}
                             </>
                         )}
                     </div>
-                    <input 
-                        className="sw-amount-input" 
-                        type="number" 
-                        value={amount} 
-                        onChange={(e) => setAmount(e.target.value)}
+                    <input
+                        className="sw-amount-input"
+                        type="number"
+                        value={amount}
+                        placeholder="0.0"
+                        onChange={(e) => {
+                            setAmount(e.target.value);
+                            setActiveAmountPreset(null);
+                            setActiveSellPercent(null);
+                        }}
                     />
+                    {connected && currentBalance > 0 && (
+                        <div className="sw-balance-badge" title={`Balance: ${currentBalance}`}>
+                            {fmtNum(currentBalance, currentBalance < 1 ? 4 : 2)}
+                        </div>
+                    )}
                 </div>
                 <div className="sw-grid">
                     {mode === 'buy' ? [0.1, 0.25, 0.5, 1, 2, 5].map(val => (
-                        <button key={val} className="sw-grid-btn" onClick={() => setAmount(String(val))}>
+                        <button
+                            key={val}
+                            className={`sw-grid-btn ${activeAmountPreset === String(val) ? 'active' : ''}`}
+                            onClick={() => handleBuyPreset(val)}
+                        >
                             {val}
                         </button>
                     )) : ['10%', '20%', '25%', '50%', '75%', '100%'].map(val => (
-                        <button key={val} className="sw-grid-btn">{val}</button>
+                        <button
+                            key={val}
+                            className={`sw-grid-btn ${activeSellPercent === val ? 'active' : ''}`}
+                            onClick={() => handleSellPercent(val)}
+                        >
+                            {val}
+                        </button>
                     ))}
                 </div>
             </div>
@@ -222,16 +358,23 @@ export default function SwapWrapper({ pool }) {
             <div className="sw-input-card">
                 <div className="sw-input-main">
                     <span className="sw-label-text">Slippage %</span>
-                    <input 
-                        className="sw-slippage-val" 
-                        type="number" 
-                        value={slippage} 
-                        onChange={(e) => setSlippage(e.target.value)}
+                    <input
+                        className="sw-slippage-val"
+                        type="number"
+                        value={slippage}
+                        onChange={(e) => {
+                            setSlippage(e.target.value);
+                            setActiveSlippagePreset(null);
+                        }}
                     />
                 </div>
-                <div className="sw-grid">
+                <div className="sw-grid sw-grid-5">
                     {[1, 2, 3, 5, 10].map(val => (
-                        <button key={val} className="sw-grid-btn" onClick={() => setSlippage(String(val))}>
+                        <button
+                            key={val}
+                            className={`sw-grid-btn ${activeSlippagePreset === String(val) ? 'active' : ''}`}
+                            onClick={() => handleSlippagePreset(val)}
+                        >
                             {val}%
                         </button>
                     ))}
@@ -239,13 +382,13 @@ export default function SwapWrapper({ pool }) {
             </div>
 
             <div className="sw-action-row">
-                <button 
+                <button
                     className={`sw-action-btn ${mode}`}
                     onClick={handleSwap}
-                    disabled={loading}
+                    disabled={swapLoading}
                 >
                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                   {connected ? (mode === 'buy' ? 'BUY' : 'SELL') : 'CONNECT WALLET'}
+                   {swapLoading ? 'PROCESSING...' : connected ? (mode === 'buy' ? 'BUY' : 'SELL') : 'CONNECT WALLET'}
                 </button>
                 <button className="sw-settings-btn" onClick={openSettings}>
                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="2" y1="14" x2="6" y2="14"/><line x1="10" y1="8" x2="14" y2="8"/><line x1="18" y1="16" x2="22" y2="16"/></svg>
@@ -253,10 +396,24 @@ export default function SwapWrapper({ pool }) {
             </div>
 
             <div className="sw-footer-info">
-                 {mode === 'buy' ? (
-                     <span>you receive min. <strong>{fmtNum(outAmountNormalized, outAmountNormalized < 1 ? 4 : 2)} {pool.baseSymbol}</strong> (~${fmtNum(usdValue, 1)})</span>
-                 ) : (
-                     <span style={{ color: '#ff4747' }}>Min. sell amount is 0.001 SOL</span>
+                 <span className="sw-receive-line">
+                     {quoteLoading ? (
+                         <>
+                             <span className="sw-quote-spinner" />
+                             fetching quote...
+                         </>
+                     ) : (
+                         <>
+                             you receive min.{' '}
+                             <strong>{formatReceiveAmount(outAmountNormalized)} {outputSymbol}</strong>
+                             {' '}(~${fmtNum(usdValue, usdValue < 1 ? 4 : 1)})
+                         </>
+                     )}
+                 </span>
+                 {quote?.priceImpactPct && parseFloat(quote.priceImpactPct) > 1 && (
+                     <span className="sw-price-impact">
+                         ⚠ Price Impact: {parseFloat(quote.priceImpactPct).toFixed(2)}%
+                     </span>
                  )}
                  <span>platform fee: 0.5%</span>
                  <div className="sw-priority-shield">
@@ -302,15 +459,15 @@ export default function SwapWrapper({ pool }) {
                                         <div className="sw-token-badge">
                                             <svg width="20" height="20" viewBox="0 0 128 128">
                                                 <path d="M110.1 76.5l-19.1 8.8L17.2 46.1c-1.3-.6-1.3-2.6 0-3.3L37.1 34l73.8 39.2c1.3.7 1.3 2.7-.8 3.3zm-92.2-25l19.1-8.8L110.8 81.9c1.3.6 1.3 2.6 0 3.3L90.9 94l-73.8-39.2c-1.3-.7-1.3-2.7.8-3.3zm0-25l19.1-8.8L110.8 56.9c1.3.6 1.3 2.6 0 3.3L90.9 69l-73.8-39.2c-1.3-.7-1.3-2.7.8-3.3z" fill="#9945FF" />
-                                                <defs><linearGradient id="b" x1="12.3" y1="12.3" x2="115.7" y2="115.7" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#9945ff" /><stop offset=".5" stop-color="#14f195" /><stop offset="1" stop-color="#14f195" /></linearGradient></defs>
+                                                <defs><linearGradient id="b" x1="12.3" y1="12.3" x2="115.7" y2="115.7" gradientUnits="userSpaceOnUse"><stop offset="0" stopColor="#9945ff" /><stop offset=".5" stopColor="#14f195" /><stop offset="1" stopColor="#14f195" /></linearGradient></defs>
                                             </svg>
                                             SOL
                                         </div>
-                                        <input 
-                                            className="sw-amount-input" 
-                                            type="number" 
-                                            value={tempPriority} 
-                                            onChange={e => setTempPriority(e.target.value)} 
+                                        <input
+                                            className="sw-amount-input"
+                                            type="number"
+                                            value={tempPriority}
+                                            onChange={e => setTempPriority(e.target.value)}
                                         />
                                     </div>
                                     <div className="sw-grid">
@@ -336,4 +493,3 @@ export default function SwapWrapper({ pool }) {
         </div>
     );
 }
-

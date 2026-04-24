@@ -71,12 +71,25 @@
     font-size: 15px;
     font-weight: 700;
     color: white;
+    white-space: nowrap;
 }
 
 .sw-token-badge img {
     width: 20px;
     height: 20px;
     border-radius: 50%;
+}
+
+.sw-token-letter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #2d3648;
+    font-size: 11px;
+    color: #94a3b8;
 }
 
 .sw-amount-input {
@@ -89,12 +102,32 @@
     font-weight: 700;
     text-align: right;
     font-family: var(--font-mono);
+    min-width: 0;
+}
+
+.sw-amount-input::placeholder {
+    color: #4a5568;
+}
+
+/* Balance badge */
+.sw-balance-badge {
+    font-size: 11px;
+    color: #64748b;
+    background: #1c212d;
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+    cursor: default;
 }
 
 .sw-grid {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
     border-top: 1px solid #2d3648;
+}
+
+.sw-grid.sw-grid-5 {
+    grid-template-columns: repeat(5, 1fr);
 }
 
 .sw-grid-btn {
@@ -106,6 +139,7 @@
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
+    transition: background 0.15s, color 0.15s;
 }
 
 .sw-grid-btn:last-child {
@@ -115,6 +149,12 @@
 .sw-grid-btn:hover {
     background: #1c212d;
     color: white;
+}
+
+.sw-grid-btn.active {
+    background: #2d3648;
+    color: #bad22d;
+    font-weight: 700;
 }
 
 .sw-label-text {
@@ -153,6 +193,12 @@
     font-weight: 800;
     text-transform: uppercase;
     cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.sw-action-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .sw-action-btn.buy {
@@ -188,6 +234,34 @@
 
 .sw-footer-info span strong {
     color: white;
+}
+
+.sw-receive-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Quote loading spinner */
+.sw-quote-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #2d3648;
+    border-top-color: #bad22d;
+    border-radius: 50%;
+    animation: sw-spin 0.6s linear infinite;
+}
+
+@keyframes sw-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Price impact warning */
+.sw-price-impact {
+    color: #f59e0b !important;
+    font-weight: 600;
+    font-size: 12px;
 }
 
 .sw-priority-shield {
@@ -396,4 +470,3 @@ input:checked + .ts-slider:before {
     font-weight: 800;
     cursor: pointer;
 }
-
