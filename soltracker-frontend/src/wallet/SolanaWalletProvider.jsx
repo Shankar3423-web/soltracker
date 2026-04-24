@@ -4,7 +4,7 @@ import { useMemo } from "react"
 
 export default function SolanaWalletProvider({ children }) {
   // Use the public RPC endpoint
-  const endpoint = "https://api.mainnet-beta.solana.com"
+  const endpoint = process.env.REACT_APP_HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com"
 
   // Only auto-connect if the user hasn't explicitly signed out recently
   const autoConnect = useMemo(() => {

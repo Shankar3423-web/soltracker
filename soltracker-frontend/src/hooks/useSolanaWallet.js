@@ -14,7 +14,7 @@ export function useSolanaWallet() {
             if (!walletAddress) return;
 
             try {
-                const connection = new Connection('https://api.mainnet-beta.solana.com');
+                const connection = new Connection(process.env.REACT_APP_HELIUS_RPC_URL || 'https://api.mainnet-beta.solana.com');
                 const balance = await connection.getBalance(new PublicKey(walletAddress));
                 setSolBalance(balance / 1e9);
             } catch (err) {

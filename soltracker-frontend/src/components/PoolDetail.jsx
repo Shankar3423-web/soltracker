@@ -18,6 +18,7 @@ import {
 } from '../utils/api';
 import WatchlistButton from './WatchlistButton';
 import './PoolDetail.css';
+import SwapWrapper from './SwapWrapper';
 
 const WINDOWS = [
     { key: 'm5', label: '5M' },
@@ -296,8 +297,8 @@ export default function PoolDetail({ pool, onClose }) {
                     />
                     <MetricCard label="Liquidity" value={fmtUsd(stats?.liquidity?.usd, true)} />
                     <MetricCard label="FDV" value={fmtUsd(stats?.fdv, true)} />
-                    <MetricCard label="MKT CAP" value={fmtUsd(stats?.marketCap, true)} />
                 </section>
+
 
                 <section className="pd-window-bar">
                     {WINDOWS.map((item) => (
@@ -344,6 +345,8 @@ export default function PoolDetail({ pool, onClose }) {
                         percent={buyerPct}
                     />
                 </section>
+
+                <SwapWrapper pool={currentPool} />
 
                 <section className="pd-info-card">
                     <InfoRow

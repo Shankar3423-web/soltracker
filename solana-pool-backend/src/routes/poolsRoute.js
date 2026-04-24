@@ -113,6 +113,8 @@ function formatPoolSummary(row) {
         quoteLogo: row.quote_logo ?? null,
         baseMint: row.base_token_mint,
         quoteMint: row.quote_token_mint,
+        baseDecimals: row.base_decimals ?? 9,
+        quoteDecimals: row.quote_decimals ?? 9,
         createdAt: row.created_at ?? null,
         stats: formatStats(row),
     };
@@ -133,6 +135,8 @@ function formatPoolDetail(row) {
         quoteName: row.quote_name ?? null,
         baseLogo: row.base_logo ?? null,
         quoteLogo: row.quote_logo ?? null,
+        baseDecimals: row.base_decimals ?? 9,
+        quoteDecimals: row.quote_decimals ?? 9,
         createdAt: row.created_at,
     };
 }
@@ -349,8 +353,8 @@ router.get('/:poolAddress', async (req, res, next) => {
 
         const poolResult = await db.query(
             `SELECT p.*, d.name AS dex_name,
-                    bt.symbol AS base_symbol_t, bt.name AS base_name, bt.logo_url AS base_logo,
-                    qt.symbol AS quote_symbol_t, qt.name AS quote_name, qt.logo_url AS quote_logo
+                    bt.symbol AS base_symbol_t, bt.name AS base_name, bt.logo_url AS base_logo, bt.decimals AS base_decimals,
+                    qt.symbol AS quote_symbol_t, qt.name AS quote_name, qt.logo_url AS quote_logo, qt.decimals AS quote_decimals
              FROM pools p
              JOIN dexes d ON d.id = p.dex_id
              LEFT JOIN tokens bt ON bt.mint = p.base_token_mint

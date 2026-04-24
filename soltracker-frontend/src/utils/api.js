@@ -180,6 +180,8 @@ export function normalizePoolSummary(row) {
         quoteLogo: row.quoteLogo ?? null,
         baseMint: row.baseMint ?? null,
         quoteMint: row.quoteMint ?? null,
+        baseDecimals: row.baseDecimals ?? 9,
+        quoteDecimals: row.quoteDecimals ?? 9,
         createdAt,
         stats,
         marketCap: stats?.marketCap ?? stats?.fdv ?? null,
@@ -214,6 +216,8 @@ export function normalizePoolDetailResponse(data) {
         quoteName: data.pool?.quoteName ?? null,
         baseLogo: data.pool?.baseLogo ?? null,
         quoteLogo: data.pool?.quoteLogo ?? null,
+        baseDecimals: data.pool?.baseDecimals ?? 9,
+        quoteDecimals: data.pool?.quoteDecimals ?? 9,
         createdAt: data.pool?.createdAt ?? null,
         stats,
     };
@@ -424,6 +428,26 @@ export function avatarGrad(seed) {
     const h1 = Math.abs(hash) % 360;
     const h2 = (h1 + 58) % 360;
     return `linear-gradient(135deg, hsl(${h1} 82% 58%), hsl(${h2} 78% 48%))`;
+}
+
+export async function logTradePending(data) {
+    const res = await fetch(`${BASE}/trades/log`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed to log trade start');
+    return res.json();
+}
+
+export async function finalizeTradeLog(id, status, txSignature) {
+    const res = await fetch(`${BASE}/trades/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, txSignature }),
+    });
+    if (!res.ok) throw new Error('Failed to update trade status');
+    return res.json();
 }
 
 export { BASE };

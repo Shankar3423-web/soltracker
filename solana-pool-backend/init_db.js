@@ -180,6 +180,21 @@ CREATE TABLE IF NOT EXISTS webhook_ingest_queue (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- 10. Trade Logs (Buy/Sell Wrapper tracking)
+CREATE TABLE IF NOT EXISTS trade_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Unique log ID
+    wallet_address TEXT NOT NULL,                   -- User's wallet
+    input_mint TEXT NOT NULL,                      -- Selling this
+    output_mint TEXT NOT NULL,                     -- Buying this
+    input_amount NUMERIC NOT NULL,                 -- Amount user spent
+    expected_output NUMERIC NOT NULL,              -- Amount user expected
+    fee_collected_sol NUMERIC NOT NULL,            -- The 0.5% fee in SOL
+    tx_signature TEXT,                             -- Transaction hash (filled after success)
+    status TEXT NOT NULL DEFAULT 'pending',        -- 'pending', 'success', 'failed'
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_swaps_pool_address ON swaps(pool_address);
 CREATE INDEX IF NOT EXISTS idx_swaps_block_time ON swaps(block_time);
@@ -194,6 +209,8 @@ CREATE INDEX IF NOT EXISTS idx_pool_candles_lookup ON pool_candles (pool_address
 CREATE INDEX IF NOT EXISTS idx_webhook_ingest_queue_status_next_attempt ON webhook_ingest_queue (status, next_attempt_at, created_at);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wallet_address ON users (wallet_address) WHERE wallet_address IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_trade_logs_wallet ON trade_logs(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_trade_logs_status ON trade_logs(status);
 `;
 
 async function run() {

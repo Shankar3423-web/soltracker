@@ -5,6 +5,7 @@ const poolsRoute = require('./routes/poolsRoute');
 const webhookRoute = require('./routes/webhookRoute');
 const authRoute = require('./routes/authRoute');
 const watchlistRoute = require('./routes/watchlistRoute');
+const tradeRoute = require('./routes/tradeRoute');
 
 const cors = require('cors');
 
@@ -30,6 +31,9 @@ app.use('/auth', authRoute);
 
 // Watchlist API — managed lists, batch hydration, and manual reordering
 app.use('/watchlists', watchlistRoute);
+
+// Trade Logging API — records intents and outcomes of swaps
+app.use('/trades', tradeRoute);
 
 // Global error handler
 app.use((err, _req, res, _next) => {

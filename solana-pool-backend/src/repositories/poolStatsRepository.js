@@ -70,9 +70,11 @@ async function getPoolStatsByDex(dexId, limit = 100, offset = 0) {
        bt.symbol     AS base_symbol_t,
        bt.name       AS base_name,
        bt.logo_url   AS base_logo,
+       bt.decimals   AS base_decimals,
        qt.symbol     AS quote_symbol_t,
        qt.name       AS quote_name,
-       qt.logo_url   AS quote_logo
+       qt.logo_url   AS quote_logo,
+       qt.decimals   AS quote_decimals
       FROM pool_stats ps
       JOIN pools  p  ON p.pool_address = ps.pool_address
       JOIN dexes  d  ON d.id           = p.dex_id

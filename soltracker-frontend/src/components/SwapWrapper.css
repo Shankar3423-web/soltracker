@@ -1,0 +1,399 @@
+.sw {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 12px;
+    background: #11141b;
+    border: 1px solid #1c212d;
+    border-radius: 8px;
+    font-family: 'Inter', sans-serif;
+}
+
+.sw-tabs {
+    display: flex;
+    background: #1c212d;
+    border-radius: 6px;
+    padding: 2px;
+    margin-bottom: 12px;
+}
+
+.sw-tab {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 4px;
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.sw-tab.active.buy {
+    background: #4a541e;
+    color: white;
+}
+
+.sw-tab.active.sell {
+    background: #4a1e1e;
+    color: white;
+}
+
+.sw-icon {
+    display: flex;
+    align-items: center;
+}
+
+.sw-input-card {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #2d3648;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+
+.sw-input-main {
+    display: flex;
+    align-items: center;
+    padding: 12px;
+    gap: 12px;
+}
+
+.sw-token-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    color: white;
+}
+
+.sw-token-badge img {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+}
+
+.sw-amount-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #f1f5f9;
+    font-size: 18px;
+    font-weight: 700;
+    text-align: right;
+    font-family: var(--font-mono);
+}
+
+.sw-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    border-top: 1px solid #2d3648;
+}
+
+.sw-grid-btn {
+    padding: 8px 4px;
+    background: transparent;
+    border: none;
+    border-right: 1px solid #2d3648;
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.sw-grid-btn:last-child {
+    border-right: none;
+}
+
+.sw-grid-btn:hover {
+    background: #1c212d;
+    color: white;
+}
+
+.sw-label-text {
+    font-size: 14px;
+    color: #94a3b8;
+    font-weight: 500;
+}
+
+.sw-slippage-val {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: white;
+    font-size: 16px;
+    font-weight: 700;
+    text-align: right;
+}
+
+.sw-action-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.sw-action-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px;
+    border-radius: 8px;
+    border: none;
+    font-size: 15px;
+    font-weight: 800;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.sw-action-btn.buy {
+    background: #bad22d;
+    color: #11141b;
+}
+
+.sw-action-btn.sell {
+    background: #ff4747;
+    color: white;
+}
+
+.sw-settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    background: #1c212d;
+    border: 1px solid #2d3648;
+    border-radius: 8px;
+    color: #94a3b8;
+    cursor: pointer;
+}
+
+.sw-footer-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: #7f8ca6;
+    font-size: 13px;
+}
+
+.sw-footer-info span strong {
+    color: white;
+}
+
+.sw-priority-shield {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.sw-quote-info {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    border-radius: 12px;
+    background: rgba(30, 41, 59, 0.3);
+}
+
+.sw-quote-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #64748b;
+}
+
+.sw-quote-row strong {
+    color: #cbd5e1;
+    font-family: var(--font-mono);
+}
+
+.sw-status {
+    margin-top: 12px;
+    padding: 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    text-align: center;
+}
+
+.sw-status.loading {
+    background: rgba(59, 130, 246, 0.1);
+    color: #60a5fa;
+}
+
+.sw-status.success {
+    background: rgba(16, 185, 129, 0.1);
+    color: #34d399;
+}
+
+.sw-status.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+}
+
+/* Trade Settings Modal */
+.ts-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ts-modal {
+    width: 100%;
+    max-width: 420px;
+    background: #1c212d;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+}
+
+.ts-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid #2d3648;
+}
+
+.ts-header h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: white;
+}
+
+.ts-close {
+    background: #2d3648;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.ts-body {
+    padding: 24px 20px;
+}
+
+.ts-section {
+    margin-bottom: 24px;
+}
+
+.ts-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.ts-label {
+    font-size: 16px;
+    font-weight: 700;
+    color: white;
+}
+
+.ts-desc {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #94a3b8;
+    margin: 8px 0;
+}
+
+.ts-desc strong {
+    color: white;
+}
+
+/* Toggle Switch */
+.ts-toggle {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 26px;
+}
+
+.ts-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.ts-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #2d3648;
+    transition: .4s;
+    border-radius: 34px;
+}
+
+.ts-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .ts-slider {
+    background-color: #bad22d;
+}
+
+input:checked + .ts-slider:before {
+    transform: translateX(24px);
+}
+
+.ts-footer {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    padding: 0 20px 24px;
+}
+
+.ts-save {
+    padding: 12px 40px;
+    background: #bad22d;
+    border: none;
+    border-radius: 8px;
+    color: #11141b;
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.ts-cancel {
+    background: transparent;
+    border: none;
+    color: white;
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
