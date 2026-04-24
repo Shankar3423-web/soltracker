@@ -242,6 +242,16 @@
     gap: 6px;
 }
 
+.sw-quote-error {
+    color: #f87171;
+    font-size: 12px;
+}
+
+.sw-quote-meta {
+    color: #94a3b8;
+    font-size: 12px;
+}
+
 /* Quote loading spinner */
 .sw-quote-spinner {
     display: inline-block;

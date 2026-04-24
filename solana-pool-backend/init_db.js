@@ -14,6 +14,8 @@ const poolConfig = process.env.DATABASE_URL
 const pool = new Pool(poolConfig);
 
 const SCHEMA_SQL = `
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- 1. DEXes
 CREATE TABLE IF NOT EXISTS dexes (
     id SERIAL PRIMARY KEY,
@@ -183,17 +185,41 @@ CREATE TABLE IF NOT EXISTS webhook_ingest_queue (
 -- 10. Trade Logs (Buy/Sell Wrapper tracking)
 CREATE TABLE IF NOT EXISTS trade_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Unique log ID
+    pool_address TEXT,                             -- Pool page where wrapper was opened
     wallet_address TEXT NOT NULL,                   -- User's wallet
     input_mint TEXT NOT NULL,                      -- Selling this
     output_mint TEXT NOT NULL,                     -- Buying this
+    trade_mode TEXT,                               -- 'buy' or 'sell'
+    input_symbol TEXT,                             -- Human-readable input token symbol
+    output_symbol TEXT,                            -- Human-readable output token symbol
     input_amount NUMERIC NOT NULL,                 -- Amount user spent
     expected_output NUMERIC NOT NULL,              -- Amount user expected
+    quoted_output NUMERIC,                         -- Raw Jupiter quote outAmount
+    minimum_output NUMERIC,                        -- Slippage-protected minimum received
     fee_collected_sol NUMERIC NOT NULL,            -- The 0.5% fee in SOL
+    slippage_bps INTEGER,                          -- Applied slippage in bps
+    priority_fee_sol NUMERIC,                      -- User-selected priority fee
+    price_impact_pct NUMERIC,                      -- Jupiter price impact
+    quote_snapshot JSONB,                          -- Compact live quote payload for debugging
     tx_signature TEXT,                             -- Transaction hash (filled after success)
+    error_message TEXT,                            -- Failure reason if swap/log update fails
     status TEXT NOT NULL DEFAULT 'pending',        -- 'pending', 'success', 'failed'
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE trade_logs
+    ADD COLUMN IF NOT EXISTS pool_address TEXT,
+    ADD COLUMN IF NOT EXISTS trade_mode TEXT,
+    ADD COLUMN IF NOT EXISTS input_symbol TEXT,
+    ADD COLUMN IF NOT EXISTS output_symbol TEXT,
+    ADD COLUMN IF NOT EXISTS quoted_output NUMERIC,
+    ADD COLUMN IF NOT EXISTS minimum_output NUMERIC,
+    ADD COLUMN IF NOT EXISTS slippage_bps INTEGER,
+    ADD COLUMN IF NOT EXISTS priority_fee_sol NUMERIC,
+    ADD COLUMN IF NOT EXISTS price_impact_pct NUMERIC,
+    ADD COLUMN IF NOT EXISTS quote_snapshot JSONB,
+    ADD COLUMN IF NOT EXISTS error_message TEXT;
 
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_swaps_pool_address ON swaps(pool_address);
@@ -211,6 +237,8 @@ CREATE INDEX IF NOT EXISTS idx_webhook_ingest_queue_status_next_attempt ON webho
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wallet_address ON users (wallet_address) WHERE wallet_address IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_trade_logs_wallet ON trade_logs(wallet_address);
 CREATE INDEX IF NOT EXISTS idx_trade_logs_status ON trade_logs(status);
+CREATE INDEX IF NOT EXISTS idx_trade_logs_pool_created_at ON trade_logs(pool_address, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_logs_mode_created_at ON trade_logs(trade_mode, created_at DESC);
 `;
 
 async function run() {

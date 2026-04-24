@@ -9,19 +9,46 @@ const repo = require('../repositories/tradeRepository');
  */
 router.post('/log', async (req, res) => {
     try {
-        const { walletAddress, inputMint, outputMint, inputAmount, expectedOutput, feeCollectedSol } = req.body;
+        const {
+            poolAddress,
+            walletAddress,
+            inputMint,
+            outputMint,
+            tradeMode,
+            inputSymbol,
+            outputSymbol,
+            inputAmount,
+            expectedOutput,
+            quotedOutput,
+            minimumOutput,
+            feeCollectedSol,
+            slippageBps,
+            priorityFeeSol,
+            priceImpactPct,
+            quoteSnapshot,
+        } = req.body;
         
         if (!walletAddress || !inputMint || !outputMint) {
             return res.status(400).json({ error: 'Missing required trade details' });
         }
 
         const log = await repo.createPendingTrade({
+            poolAddress: poolAddress || null,
             walletAddress,
             inputMint,
             outputMint,
+            tradeMode: tradeMode || null,
+            inputSymbol: inputSymbol || null,
+            outputSymbol: outputSymbol || null,
             inputAmount: inputAmount || 0,
             expectedOutput: expectedOutput || 0,
-            feeCollectedSol: feeCollectedSol || 0
+            quotedOutput: quotedOutput || 0,
+            minimumOutput: minimumOutput || 0,
+            feeCollectedSol: feeCollectedSol || 0,
+            slippageBps: Number.isFinite(Number(slippageBps)) ? Number(slippageBps) : null,
+            priorityFeeSol: Number.isFinite(Number(priorityFeeSol)) ? Number(priorityFeeSol) : null,
+            priceImpactPct: Number.isFinite(Number(priceImpactPct)) ? Number(priceImpactPct) : null,
+            quoteSnapshot: quoteSnapshot || null,
         });
 
         res.status(201).json(log);
@@ -38,7 +65,7 @@ router.post('/log', async (req, res) => {
 router.patch('/:id/status', async (req, res) => {
     try {
         const { id } = req.params;
-        const { status, txSignature } = req.body;
+        const { status, txSignature, errorMessage } = req.body;
 
         if (!status) {
             return res.status(400).json({ error: 'Status is required' });
@@ -46,7 +73,8 @@ router.patch('/:id/status', async (req, res) => {
 
         const updated = await repo.updateTradeStatus(id, {
             status, // 'success', 'failed'
-            txSignature
+            txSignature,
+            errorMessage: errorMessage || null,
         });
 
         if (!updated) {

@@ -440,11 +440,11 @@ export async function logTradePending(data) {
     return res.json();
 }
 
-export async function finalizeTradeLog(id, status, txSignature) {
+export async function finalizeTradeLog(id, status, txSignature, errorMessage = null) {
     const res = await fetch(`${BASE}/trades/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, txSignature }),
+        body: JSON.stringify({ status, txSignature, errorMessage }),
     });
     if (!res.ok) throw new Error('Failed to update trade status');
     return res.json();
