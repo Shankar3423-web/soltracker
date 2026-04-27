@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { BASE } from '../utils/api';
+import { RPC_ENDPOINT } from '../config/network';
 
 export function useSolanaWallet() {
     const { publicKey, connected } = useWallet();
@@ -14,7 +15,7 @@ export function useSolanaWallet() {
             if (!walletAddress) return;
 
             try {
-                const connection = new Connection(process.env.REACT_APP_HELIUS_RPC_URL || 'https://api.mainnet-beta.solana.com');
+                const connection = new Connection(RPC_ENDPOINT);
                 const balance = await connection.getBalance(new PublicKey(walletAddress));
                 setSolBalance(balance / 1e9);
             } catch (err) {
