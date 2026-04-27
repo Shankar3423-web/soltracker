@@ -9,7 +9,7 @@ const {
 } = require('@solana/web3.js');
 const bs58 = require('bs58'); // Required to parse Phantom wallet export
 
-const RPC_URL = 'https://api.devnet.solana.com';
+const RPC_URL = 'https://api.mainnet-beta.solana.com';
 const TREASURY_WALLET = '4VPQh5E6atYbNDAtE9TKpCRVL4RBYgkNu3KDf3VqcJWe';
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 const WSOL_ATA = 'E4pWSEHLentftgggf2iko3GAd95pScayCQaWmwr7zvTR';
