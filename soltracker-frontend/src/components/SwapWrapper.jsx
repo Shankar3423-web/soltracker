@@ -306,7 +306,8 @@ export default function SwapWrapper({ pool }) {
     }, []);
 
     const ensureTreasuryFeeAccount = useCallback(async () => {
-        if (platformFeeBps <= 0) {
+        const effectiveFeeBps = mode === 'buy' ? 0 : platformFeeBps;
+        if (effectiveFeeBps <= 0) {
             return null;
         }
 
@@ -324,7 +325,7 @@ export default function SwapWrapper({ pool }) {
         }
 
         return feeAccount.toBase58();
-    }, [connection, platformFeeBps]);
+    }, [connection, platformFeeBps, mode]);
 
     const getFreshQuote = useCallback(async (overrideAmount) => {
         const requestedAmount = String(overrideAmount ?? amount ?? '').trim();
@@ -339,15 +340,17 @@ export default function SwapWrapper({ pool }) {
             throw new Error('Enter a valid amount to fetch a live quote.');
         }
 
+        const effectiveFeeBps = mode === 'buy' ? 0 : platformFeeBps;
+
         return getJupiterQuote({
             inputMint,
             outputMint,
             amount: atomicAmount,
             slippageBps: toSlippageBps(slippage),
             restrictIntermediateTokens: protection,
-            platformFeeBps,
+            platformFeeBps: effectiveFeeBps,
         });
-    }, [amount, inputDecimals, inputMint, outputMint, platformFeeBps, protection, slippage]);
+    }, [amount, inputDecimals, inputMint, outputMint, platformFeeBps, protection, slippage, mode]);
 
     const fetchQuote = useCallback(async (overrideAmount) => {
         const requestedAmount = String(overrideAmount ?? amount ?? '').trim();
@@ -630,8 +633,9 @@ export default function SwapWrapper({ pool }) {
                 throw new Error(`Not enough SOL to pay network fees. Keep about ${fmtNum(executionReserveSol, executionReserveSol < 1 ? 4 : 2)} SOL free before selling.`);
             }
 
+            const effectiveFeeBps = mode === 'buy' ? 0 : platformFeeBps;
             const quotedPlatformFee = fromAtomicAmount(liveQuote?.platformFee?.amount, 9);
-            const feePercent = platformFeeBps / 10000;
+            const feePercent = effectiveFeeBps / 10000;
             const feeCollected = quotedPlatformFee > 0
                 ? quotedPlatformFee
                 : mode === 'buy'
@@ -674,7 +678,7 @@ export default function SwapWrapper({ pool }) {
                 microLamports,
                 feeAccount,
                 TREASURY,
-                platformFeeBps
+                effectiveFeeBps
             );
 
             const transactionBuf = Uint8Array.from(atob(swapTransaction), (char) => char.charCodeAt(0));
