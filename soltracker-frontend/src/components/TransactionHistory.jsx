@@ -260,7 +260,15 @@ function TxCard({ tx }) {
             {sig ? (
                 <div className="txh-sig-row">
                     <span className="txh-sig-label">TX</span>
-                    <span className="txh-sig-value" title={sig}>{sig}</span>
+                    <a
+                        href={`https://solscan.io/tx/${sig}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="txh-sig-value"
+                        title={sig}
+                    >
+                        {sig}
+                    </a>
                     <a
                         href={`https://solscan.io/tx/${sig}`}
                         target="_blank"

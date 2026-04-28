@@ -301,6 +301,13 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     letter-spacing: 0.02em;
+    text-decoration: none;
+    transition: all 0.15s ease;
+}
+
+.txh-sig-value:hover {
+    color: #b78aff;
+    text-decoration: underline;
 }
 
 .txh-sig-link {
