@@ -181,3 +181,210 @@
         display: none;
     }
 }
+
+/* ── Wallet address sub-row ──────────────────────────────────────────── */
+.sb-user-wallet-addr {
+    font-size: 10px;
+    color: #5b6a84;
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+}
+
+/* ── Hover tooltip card (opens RIGHT so it's never clipped) ──────────── */
+.sb-wallet-card {
+    position: static; /* let the .sb-signin be the anchor */
+}
+
+.sb-signin {
+    position: relative; /* tooltip anchors here */
+}
+
+.sb-wallet-tooltip {
+    /* Right of the sidebar, vertically centred on the card */
+    position: absolute;
+    left: calc(100% + 14px);
+    bottom: 0;
+    transform: translateX(-6px);
+
+    /* Size */
+    width: 260px;
+
+    /* Glassmorphism panel */
+    background: rgba(10, 13, 26, 0.97);
+    border: 1px solid rgba(153, 69, 255, 0.28);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow:
+        0 20px 48px rgba(0, 0, 0, 0.75),
+        0 0 0 1px rgba(153, 69, 255, 0.06),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+    /* Hidden by default */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 9999;
+}
+
+/* Reveal on hover */
+.sb-wallet-card:hover .sb-wallet-tooltip,
+.sb-signin:hover .sb-wallet-tooltip {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+/* ── Gradient header strip ───────────────────────────────────────────── */
+.sb-wt-header {
+    padding: 12px 14px 10px;
+    background: linear-gradient(135deg, rgba(153, 69, 255, 0.14) 0%, rgba(111, 208, 255, 0.06) 100%);
+    border-bottom: 1px solid rgba(153, 69, 255, 0.15);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sb-wt-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(153, 69, 255, 0.35);
+    flex-shrink: 0;
+}
+
+.sb-wt-header-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.sb-wt-username {
+    font-size: 13px;
+    font-weight: 700;
+    color: #f0f4ff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sb-wt-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9945ff;
+}
+
+.sb-wt-badge-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #9945ff;
+    box-shadow: 0 0 6px rgba(153, 69, 255, 0.8);
+    animation: sb-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes sb-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.5; transform: scale(0.75); }
+}
+
+/* ── Body rows ───────────────────────────────────────────────────────── */
+.sb-wt-body {
+    padding: 10px 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sb-wt-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.sb-wt-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #3d4d6a;
+}
+
+.sb-wt-value {
+    font-size: 12px;
+    color: #d8e2f2;
+    font-weight: 500;
+    line-height: 1.5;
+}
+
+/* Wallet address: full text, wrapped, monospace */
+.sb-wt-addr {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: #9945ff;
+    letter-spacing: 0.015em;
+    word-break: break-all;
+    background: rgba(153, 69, 255, 0.07);
+    border: 1px solid rgba(153, 69, 255, 0.12);
+    border-radius: 6px;
+    padding: 5px 8px;
+    line-height: 1.6;
+}
+
+/* SOL balance chip */
+.sb-wt-sol-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(111, 208, 255, 0.08);
+    border: 1px solid rgba(111, 208, 255, 0.16);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #6fd0ff;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.02em;
+}
+
+.sb-wt-sol-chip-icon {
+    width: 14px;
+    height: 14px;
+    opacity: 0.7;
+}
+
+/* Divider between rows */
+.sb-wt-divider {
+    height: 1px;
+    background: rgba(148, 163, 184, 0.07);
+    margin: 0 -14px;
+    width: calc(100% + 28px);
+}
+
+/* ── Left-pointing arrow ─────────────────────────────────────────────── */
+.sb-wallet-tooltip::before {
+    content: '';
+    position: absolute;
+    right: 100%;
+    bottom: 28px;
+    border: 7px solid transparent;
+    border-right-color: rgba(153, 69, 255, 0.28);
+}
+
+.sb-wallet-tooltip::after {
+    content: '';
+    position: absolute;
+    right: calc(100% - 1px);
+    bottom: 29px;
+    border: 6px solid transparent;
+    border-right-color: rgba(10, 13, 26, 0.97);
+}
+

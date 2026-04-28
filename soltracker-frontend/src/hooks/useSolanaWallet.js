@@ -8,6 +8,8 @@ export function useSolanaWallet() {
     const { publicKey, connected } = useWallet();
     const [solBalance, setSolBalance] = useState(0);
     const [username, setUsername] = useState(null);
+    const [needsUsername, setNeedsUsername] = useState(false);
+    const [avatarSeed, setAvatarSeed] = useState(0);
     const walletAddress = publicKey?.toString();
 
     useEffect(() => {
@@ -44,6 +46,10 @@ export function useSolanaWallet() {
                     const userData = await userRes.json();
                     if (userData.username) {
                         setUsername(userData.username);
+                        setNeedsUsername(false);
+                    } else {
+                        // New user – prompt for a username
+                        setNeedsUsername(true);
                     }
                 }
             } catch (err) {
@@ -54,10 +60,13 @@ export function useSolanaWallet() {
         if (connected && walletAddress) {
             localStorage.setItem('wallet_disconnected', 'false');
             localStorage.setItem('wallet_address', walletAddress);
+            setAvatarSeed(Math.floor(Math.random() * 100000));
             fetchBalance();
             syncWithBackend();
         } else {
             setUsername(null);
+            setNeedsUsername(false);
+            setAvatarSeed(0);
             setSolBalance(0);
         }
     }, [connected, walletAddress]);
@@ -67,5 +76,9 @@ export function useSolanaWallet() {
         connected,
         solBalance,
         username,
+        setUsername,
+        needsUsername,
+        setNeedsUsername,
+        avatarSeed,
     };
 }
