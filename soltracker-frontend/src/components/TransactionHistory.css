@@ -1,0 +1,420 @@
+/* ── Transaction History Panel ─────────────────────────────────────────── */
+.txh-wrap {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: linear-gradient(180deg, rgba(12, 16, 26, 0.98), rgba(8, 11, 18, 0.99));
+}
+
+.txh-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+    background: linear-gradient(135deg, rgba(153, 69, 255, 0.06) 0%, rgba(111, 208, 255, 0.03) 100%);
+}
+
+.txh-title-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.txh-title-group h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 800;
+    color: #f0f4ff;
+    letter-spacing: -0.01em;
+}
+
+.txh-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(153, 69, 255, 0.1);
+    border: 1px solid rgba(153, 69, 255, 0.2);
+    font-size: 10px;
+    font-weight: 700;
+    color: #b78aff;
+    letter-spacing: 0.02em;
+}
+
+.txh-close-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    color: #8999b8;
+    transition: all 0.15s ease;
+}
+
+.txh-close-btn:hover {
+    background: rgba(255, 107, 129, 0.12);
+    color: #ff6b81;
+}
+
+/* ── Loading / Empty States ──────────────────────────────────────────── */
+.txh-loading,
+.txh-empty,
+.txh-sign-in {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 40px;
+    color: #7f8aa3;
+    font-size: 13px;
+    text-align: center;
+}
+
+.txh-sign-in .txh-lock-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(153, 69, 255, 0.08);
+    border: 1px solid rgba(153, 69, 255, 0.18);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #9945ff;
+    margin-bottom: 4px;
+}
+
+.txh-empty-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: rgba(111, 208, 255, 0.06);
+    border: 1px solid rgba(111, 208, 255, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6fd0ff;
+    margin-bottom: 4px;
+}
+
+.txh-sign-in p,
+.txh-empty p {
+    margin: 0;
+    color: #5b6a84;
+    font-size: 12px;
+    max-width: 260px;
+    line-height: 1.5;
+}
+
+/* ── Scroll area ─────────────────────────────────────────────────────── */
+.txh-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px 20px;
+}
+
+.txh-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+
+.txh-scroll::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.txh-scroll::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.12);
+    border-radius: 4px;
+}
+
+/* ── Transaction Card ────────────────────────────────────────────────── */
+.txh-card {
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    border-radius: 12px;
+    background: rgba(16, 21, 34, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.06);
+    transition: all 0.18s ease;
+    cursor: default;
+}
+
+.txh-card:hover {
+    border-color: rgba(153, 69, 255, 0.2);
+    background: rgba(20, 26, 42, 0.95);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+}
+
+.txh-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.txh-card-pair {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.txh-mode-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.txh-mode-badge.buy {
+    background: rgba(45, 220, 167, 0.1);
+    color: #2ddca7;
+    border: 1px solid rgba(45, 220, 167, 0.2);
+}
+
+.txh-mode-badge.sell {
+    background: rgba(255, 107, 129, 0.1);
+    color: #ff6b81;
+    border: 1px solid rgba(255, 107, 129, 0.2);
+}
+
+.txh-pair-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: #e8eaf0;
+}
+
+.txh-pair-name .quote {
+    color: #5b6a84;
+    font-weight: 500;
+}
+
+.txh-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.txh-status.success {
+    background: rgba(45, 220, 167, 0.08);
+    color: #2ddca7;
+}
+
+.txh-status.failed {
+    background: rgba(255, 107, 129, 0.08);
+    color: #ff6b81;
+}
+
+.txh-status.pending {
+    background: rgba(255, 209, 102, 0.08);
+    color: #ffd166;
+}
+
+.txh-status-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+/* ── Card Detail Grid ────────────────────────────────────────────────── */
+.txh-card-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 14px;
+    margin-bottom: 10px;
+}
+
+.txh-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.txh-field-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #3d4d6a;
+}
+
+.txh-field-value {
+    font-size: 12px;
+    font-weight: 600;
+    color: #d0daf0;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.01em;
+}
+
+.txh-field-value.accent {
+    color: #6fd0ff;
+}
+
+.txh-field-value.green {
+    color: #2ddca7;
+}
+
+.txh-field-value.red {
+    color: #ff6b81;
+}
+
+/* ── Signature Row ───────────────────────────────────────────────────── */
+.txh-sig-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: rgba(153, 69, 255, 0.04);
+    border: 1px solid rgba(153, 69, 255, 0.1);
+    border-radius: 8px;
+}
+
+.txh-sig-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #3d4d6a;
+    flex-shrink: 0;
+}
+
+.txh-sig-value {
+    flex: 1;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #9945ff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+}
+
+.txh-sig-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    color: #8999b8;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+}
+
+.txh-sig-link:hover {
+    background: rgba(153, 69, 255, 0.12);
+    color: #b78aff;
+}
+
+.txh-no-sig {
+    font-size: 11px;
+    color: #3d4d6a;
+    font-style: italic;
+}
+
+/* ── Card Footer ─────────────────────────────────────────────────────── */
+.txh-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(148, 163, 184, 0.05);
+}
+
+.txh-card-time {
+    font-size: 10px;
+    color: #5b6a84;
+}
+
+.txh-card-pool {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #5b6a84;
+    letter-spacing: 0.02em;
+}
+
+/* ── Pagination ──────────────────────────────────────────────────────── */
+.txh-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-top: 1px solid rgba(148, 163, 184, 0.06);
+}
+
+.txh-page-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 7px 14px;
+    border-radius: 8px;
+    background: rgba(20, 28, 42, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    color: #d0daf0;
+    font-size: 11px;
+    font-weight: 600;
+    transition: all 0.15s ease;
+}
+
+.txh-page-btn:hover:not(:disabled) {
+    background: rgba(153, 69, 255, 0.1);
+    border-color: rgba(153, 69, 255, 0.25);
+    color: #b78aff;
+}
+
+.txh-page-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.txh-page-info {
+    font-size: 11px;
+    color: #5b6a84;
+    font-weight: 600;
+}
+
+/* ── Spinner reuse ───────────────────────────────────────────────────── */
+.txh-loading .spinner {
+    width: 28px;
+    height: 28px;
+    border: 2.5px solid rgba(153, 69, 255, 0.15);
+    border-top-color: #9945ff;
+    border-radius: 50%;
+    animation: txh-spin 0.8s linear infinite;
+}
+
+@keyframes txh-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ── Error row ───────────────────────────────────────────────────────── */
+.txh-error-row {
+    margin-top: 4px;
+    padding: 6px 10px;
+    background: rgba(255, 107, 129, 0.05);
+    border: 1px solid rgba(255, 107, 129, 0.12);
+    border-radius: 6px;
+}
+
+.txh-error-msg {
+    font-size: 10px;
+    color: #ff6b81;
+    word-break: break-all;
+    line-height: 1.4;
+}

@@ -14,6 +14,28 @@ router.get('/config', (_req, res) => {
 });
 
 /**
+ * GET /trades/wallet/:address
+ * Fetch all trade logs for a wallet address (paginated, newest-first).
+ */
+router.get('/wallet/:address', async (req, res) => {
+    try {
+        const { address } = req.params;
+        if (!address) {
+            return res.status(400).json({ error: 'Wallet address is required' });
+        }
+
+        const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+        const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+        const { total, trades } = await repo.getTradesByWallet(address, { limit, offset });
+        res.json({ total, limit, offset, trades });
+    } catch (err) {
+        console.error('[TradeRoute] GET wallet trades error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch trade history' });
+    }
+});
+
+/**
  * POST /trades/log
  * Create a new pending trade entry.
  */

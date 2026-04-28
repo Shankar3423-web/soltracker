@@ -6,11 +6,12 @@ import TopBar from './components/TopBar';
 import PoolList from './components/PoolList';
 import PoolDetail from './components/PoolDetail';
 import WatchlistPanel from './components/WatchlistPanel';
+import TransactionHistory from './components/TransactionHistory';
 import { useWatchlistStore } from './hooks/useWatchlistStore';
 import { useWatchlistSockets } from './hooks/useWatchlistSockets';
 
 export default function App() {
-    const [view, setView] = useState('market'); // 'market' or 'watchlist'
+    const [view, setView] = useState('market'); // 'market', 'watchlist', or 'history'
     const [activeDex, setActiveDex] = useState(null);
     const [selectedPool, setSelectedPool] = useState(null);
 
@@ -32,11 +33,17 @@ export default function App() {
         setSelectedPool(null);
     }
 
+    function handleViewHistory() {
+        setView('history');
+        setSelectedPool(null);
+    }
+
     return (
         <div className="app-shell">
             <Sidebar 
                 onSelectSolana={() => handleDexChange(null)} 
                 onSelectWatchlist={handleViewWatchlist}
+                onSelectHistory={handleViewHistory}
             />
             <div className="app-main">
                 <TopBar
@@ -55,6 +62,10 @@ export default function App() {
                     ) : view === 'watchlist' ? (
                         <section className="app-list-panel">
                             <WatchlistPanel onSelectPool={setSelectedPool} />
+                        </section>
+                    ) : view === 'history' ? (
+                        <section className="app-list-panel">
+                            <TransactionHistory onClose={() => setView('market')} />
                         </section>
                     ) : (
                         <section className="app-list-panel">

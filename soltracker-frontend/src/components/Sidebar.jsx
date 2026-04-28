@@ -8,7 +8,7 @@ import { useSolanaWallet } from '../hooks/useSolanaWallet';
 import { avatarGrad } from '../utils/api';
 import './Sidebar.css';
 
-export default function Sidebar({ onSelectSolana, onSelectWatchlist }) {
+export default function Sidebar({ onSelectSolana, onSelectWatchlist, onSelectHistory }) {
     const [showLogin, setShowLogin] = useState(false);
     const [user, setUser] = useState(null);
     const { walletAddress, connected, solBalance, username, setUsername, needsUsername, setNeedsUsername, avatarSeed } = useSolanaWallet();
@@ -64,6 +64,13 @@ export default function Sidebar({ onSelectSolana, onSelectWatchlist }) {
                 <div className="sb-network-left">
                     <StarIcon />
                     <span>Watchlist</span>
+                </div>
+            </button>
+
+            <button type="button" className="sb-network-btn" onClick={() => onSelectHistory()} style={{ marginTop: 6 }}>
+                <div className="sb-network-left">
+                    <ClockIcon />
+                    <span>Tx History</span>
                 </div>
             </button>
 
@@ -214,6 +221,15 @@ function StarIcon() {
     return (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+        </svg>
+    );
+}
+
+function ClockIcon() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
         </svg>
     );
 }

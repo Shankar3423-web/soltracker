@@ -431,6 +431,12 @@ export function avatarGrad(seed) {
     return `linear-gradient(135deg, hsl(${h1} 82% 58%), hsl(${h2} 78% 48%))`;
 }
 
+export async function fetchUserTrades(walletAddress, { limit = 50, offset = 0 } = {}) {
+    const res = await fetch(`${BASE}/trades/wallet/${encodeURIComponent(walletAddress)}?limit=${limit}&offset=${offset}`);
+    if (!res.ok) throw new Error('Failed to fetch trade history');
+    return res.json();
+}
+
 export async function logTradePending(data) {
     const res = await fetch(`${BASE}/trades/log`, {
         method: 'POST',

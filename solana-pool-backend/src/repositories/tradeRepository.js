@@ -241,6 +241,28 @@ async function getTradesPendingSettlement(limit = 20) {
     return result.rows;
 }
 
+/**
+ * Fetch all trade logs for a given wallet address, newest first.
+ * Supports pagination via limit + offset.
+ */
+async function getTradesByWallet(walletAddress, { limit = 50, offset = 0 } = {}) {
+    const countResult = await db.query(
+        `SELECT COUNT(*) AS total FROM trade_logs WHERE wallet_address = $1`,
+        [walletAddress]
+    );
+    const total = Number(countResult.rows[0].total);
+
+    const result = await db.query(
+        `SELECT * FROM trade_logs
+         WHERE wallet_address = $1
+         ORDER BY created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [walletAddress, limit, offset]
+    );
+
+    return { total, trades: result.rows };
+}
+
 module.exports = {
     createPendingTrade,
     ensureTradeLog,
@@ -248,4 +270,5 @@ module.exports = {
     updateTradeSettlement,
     getTradeById,
     getTradesPendingSettlement,
+    getTradesByWallet,
 };
